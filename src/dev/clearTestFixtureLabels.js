@@ -2,8 +2,9 @@
  * Dev only. Removes invoices/processed from the eight fixture threads.
  * A client push does not include src/dev (.claspignore).
  *
- * Settings month must be 2026-11. Run clearTestFixtureLabels, then
- * saveTestFixtureFiles again. Other mail is not searched or changed.
+ * Settings month must be 2026-11. This also clears the resume cursor.
+ * Run clearTestFixtureLabels, then saveTestFixtureFiles again.
+ * Other mail is not searched or changed.
  */
 
 function clearTestFixtureLabels() {
@@ -18,6 +19,7 @@ function clearTestFixtureLabels() {
   var cleared = listed.count
     ? removeProcessedLabel(listed.messages, subjects, getConfig().processed_label)
     : 0;
+  clearCollectCursor_();
   Logger.log('clearTestFixtureLabels found=%s cleared=%s', listed.count, cleared);
   return { month: listed.month, found: listed.count, cleared: cleared };
 }

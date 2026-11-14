@@ -1,19 +1,22 @@
 /**
- * Dev only. Copies unlabeled fixture messages into Invoices/2026-11,
- * then labels those threads invoices/processed.
+ * Dev only. Saves unlabeled fixture messages in batches and writes one RunLog row.
  * A client push does not include src/dev (.claspignore).
  *
- * 1. Settings month = 2026-11. invoices_folder_id blank, or already the 2026-11 folder.
- * 2. npm run push:dev
- * 3. Run saveTestFixtureFiles. It saves the eight messages and labels them.
- * 4. Run saveTestFixtureFiles again. processed and created are both 0.
+ * 1. Settings month = 2026-11. Run setupCollectorSheet so batch_size exists.
+ * 2. Set batch_size to 3 to test resume. Leave it at 20 to finish in one run.
+ * 3. npm run push:dev
+ * 4. Run clearTestFixtureLabels if these messages are already labeled.
+ * 5. Run saveTestFixtureFiles. With batch size 3 the first row is partial, cursor 3.
+ * 6. Run it again (cursor 6), then again (status ok, cursor empty).
+ * 7. One more run processes 0 messages and creates 0 files.
  *
- * To repeat the test, run clearTestFixtureLabels, then save again.
- * Gmail is read only through listTestFixtureMessages.
+ * Gmail is read only through listTestFixtureMessages. Each run stops before
+ * 6 minutes and leaves the cursor for the next run.
  */
 
 function saveTestFixtureFiles() {
-  var listed = listTestFixtureMessages();
+  var config = getConfig();
+  var listed = listTestFixtureMessages({ includeProcessed: true });
   if (listed.month !== '2026-11') {
     throw new Error(
       'Set Settings month to 2026-11. This run saves Invoices/2026-11 and found month ' +
@@ -21,44 +24,100 @@ function saveTestFixtureFiles() {
         '.'
     );
   }
-  var subjects = testFixtureSubjects_();
-  if (!listed.count) {
-    var all = listTestFixtureMessages({ includeProcessed: true });
-    if (!all.count) {
-      throw new Error('No fixture messages in 2026-11. Run sendTestFixtures first.');
-    }
-    var idle = collectRunTotals(0, []);
-    Logger.log(
-      'saveTestFixtureFiles processed=%s created=%s alreadyProcessed=%s',
-      idle.processed,
-      idle.created,
-      all.count
+  if (listed.count !== 8) {
+    throw new Error(
+      'Expected 8 fixture messages in 2026-11, found ' +
+        listed.count +
+        '. Run sendTestFixtures.'
     );
+  }
+  var subjects = testFixtureSubjects_();
+  var batchSize = normalizeBatchSize(config.batch_size, listed.count);
+  var plan = planBatch(listed.messages, loadCollectCursor_(), batchSize);
+  var started = new Date();
+  var entry = {
+    startedAt: started,
+    finishedAt: '',
+    mode: config.mode || 'deterministic',
+    messages: 0,
+    files: 0,
+    rows: 0,
+    errors: '',
+    status: plan.done ? 'ok' : 'running',
+    cursor: plan.done ? '' : String(plan.start)
+  };
+  if (plan.done) {
+    clearCollectCursor_();
+    entry.finishedAt = new Date();
+    var idle = collectRunTotals(0, []);
+    var idleRow = beginRunLog_(entry);
+    Logger.log('saveTestFixtureFiles processed=%s created=%s status=ok', idle.processed, idle.created);
     return {
       path: 'Invoices/' + listed.month,
-      folderId: getConfig().invoices_folder_id || '',
+      folderId: config.invoices_folder_id || '',
       processed: idle.processed,
       created: idle.created,
       labeled: 0,
-      alreadyProcessed: all.count,
+      status: 'ok',
+      cursor: '',
+      batchSize: batchSize,
+      logRow: idleRow,
       files: []
     };
   }
-  var config = getConfig();
-  var folder = ensureMonthFolder(config.invoices_folder_id, listed.month);
-  var folderId = rememberInvoicesFolderId(folder.getId());
-  var plans = planFixtureSaves(listed.messages, TEST_FIXTURE_MESSAGES);
-  if (plans.length !== listed.count) throw new Error('Refusing to save because a fixture subject is missing');
-  var files = savePlannedCopies(plans, folder, readFixtureSource_);
-  if (files.length !== plans.length) throw new Error('Refusing to label because a file was not saved');
-  var totals = collectRunTotals(plans.length, files);
-  var labeled = applyProcessedLabel(plans, subjects, config.processed_label);
+
+  var logRow = beginRunLog_(entry);
+  var folderId = config.invoices_folder_id || '';
+  var files = [];
+  var labeled = 0;
+  var cursor = String(plan.start);
+  var errors = '';
+  var failedIndex = plan.start;
+  try {
+    var folder = ensureMonthFolder(folderId, listed.month);
+    folderId = rememberInvoicesFolderId(folder.getId());
+    for (var i = 0; i < plan.batch.length; i++) {
+      failedIndex = plan.batch[i].index;
+      if (runShouldStop(started.getTime(), Date.now(), RUN_TIME_BUDGET_MS, i, batchSize) === 'time') {
+        cursor = String(plan.batch[i].index);
+        break;
+      }
+      var plans = planFixtureSaves([plan.batch[i].item], TEST_FIXTURE_MESSAGES);
+      if (plans.length !== 1) throw new Error('Refusing to save because a fixture subject is missing');
+      var saved = savePlannedCopies(plans, folder, readFixtureSource_);
+      if (saved.length !== 1) throw new Error('Refusing to label because a file was not saved');
+      labeled += applyProcessedLabel(plans, subjects, config.processed_label);
+      files.push(saved[0]);
+      cursor = i + 1 < plan.batch.length ? String(plan.batch[i + 1].index) : plan.nextCursor;
+      saveCollectCursor_(cursor);
+      entry.messages = labeled;
+      entry.files = collectRunTotals(labeled, files).created;
+      entry.status = 'running';
+      entry.cursor = cursor;
+      updateRunLog_(logRow, entry);
+    }
+  } catch (error) {
+    errors = String(error && error.message ? error.message : error).slice(0, 500);
+    cursor = String(failedIndex);
+    saveCollectCursor_(cursor);
+  }
+  var totals = collectRunTotals(labeled, files);
+  entry.finishedAt = new Date();
+  entry.messages = totals.processed;
+  entry.files = totals.created;
+  entry.rows = 0;
+  entry.errors = errors;
+  entry.cursor = cursor;
+  entry.status = errors ? 'error' : cursor ? 'partial' : 'ok';
+  if (entry.status === 'ok') clearCollectCursor_();
+  else saveCollectCursor_(cursor);
+  updateRunLog_(logRow, entry);
   Logger.log(
-    'saveTestFixtureFiles processed=%s created=%s labeled=%s folder=%s',
+    'saveTestFixtureFiles processed=%s created=%s status=%s cursor=%s',
     totals.processed,
     totals.created,
-    labeled,
-    folderId
+    entry.status,
+    cursor
   );
   return {
     path: 'Invoices/' + listed.month,
@@ -66,7 +125,11 @@ function saveTestFixtureFiles() {
     processed: totals.processed,
     created: totals.created,
     labeled: labeled,
-    alreadyProcessed: 0,
+    status: entry.status,
+    cursor: cursor,
+    batchSize: batchSize,
+    logRow: logRow,
+    errors: errors,
     files: files
   };
 }

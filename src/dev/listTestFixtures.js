@@ -6,7 +6,7 @@
  * Settings month must be the month those messages were sent (YYYY-MM).
  * A blank month means the previous calendar month.
  * Messages labeled invoices/processed are skipped.
- * Pass { includeProcessed: true } only from the dev label-clear helper.
+ * Pass { includeProcessed: true } from the save and label-clear helpers.
  */
 
 function listTestFixtureMessages(options) {
@@ -37,7 +37,8 @@ function listTestFixtureMessages(options) {
       threadId: message.threadId,
       subject: message.subject,
       from: message.from,
-      date: message.dateYmd
+      date: message.dateYmd,
+      processed: hasProcessedLabel_(message.labelNames, config.processed_label)
     };
   });
   Logger.log(

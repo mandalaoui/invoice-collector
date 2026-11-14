@@ -235,6 +235,12 @@ var SETTINGS_FIELDS = [
     note: 'deterministic, local_ai, or compare.'
   },
   {
+    key: 'batch_size',
+    value: 20,
+    type: 'number',
+    note: 'Messages per run before the cursor is saved. Use 3 to test resume on the 8 fixtures. The run also stops short of the 6-minute limit.'
+  },
+  {
     key: 'processed_label',
     value: 'invoices/processed',
     type: 'string',
