@@ -8,7 +8,7 @@
 ## Phase 1 — Pipeline skeleton (no extraction yet)
 - [x] 1.1 `gmail.js`: search by month + queries, skip processed. Done when: lists test messages. ✅
 - [x] 1.2 `drive.js`: save originals to `Invoices/YYYY-MM/` with naming rule; email body → PDF. Done when: all test files appear, unchanged. ✅
-- [ ] 1.3 Labels + idempotency. Done when: second run creates 0 new files.
+- [x] 1.3 Labels + idempotency. Done when: second run creates 0 new files. ✅
 - [ ] 1.4 `RunLog` + batching for the 6-minute limit. Done when: run logs counts and resumes.
 
 ## Phase 2 — Text + extraction

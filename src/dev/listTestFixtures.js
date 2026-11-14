@@ -5,9 +5,12 @@
  * npm run push:dev, then run listTestFixtureMessages in the Apps Script editor.
  * Settings month must be the month those messages were sent (YYYY-MM).
  * A blank month means the previous calendar month.
+ * Messages labeled invoices/processed are skipped.
+ * Pass { includeProcessed: true } only from the dev label-clear helper.
  */
 
-function listTestFixtureMessages() {
+function listTestFixtureMessages(options) {
+  var includeProcessed = !!(options && options.includeProcessed);
   var subjects = [];
   for (var i = 0; i < TEST_FIXTURE_MESSAGES.length; i++) {
     subjects.push(TEST_FIXTURE_MESSAGES[i].subject);
@@ -18,17 +21,20 @@ function listTestFixtureMessages() {
   var plan = buildFixtureSearchQueries(subjects, {
     month: config.month,
     today: today,
-    processed_label: config.processed_label
+    processed_label: config.processed_label,
+    includeProcessed: includeProcessed
   });
   var candidates = readFixtureMessages(plan.queries, subjects, timeZone);
   var selected = selectCollectMessages(candidates, {
     month: plan.month,
     processedLabel: config.processed_label,
-    allowedSubjects: subjects
+    allowedSubjects: subjects,
+    includeProcessed: includeProcessed
   });
   var messages = selected.map(function (message) {
     return {
       id: message.id,
+      threadId: message.threadId,
       subject: message.subject,
       from: message.from,
       date: message.dateYmd

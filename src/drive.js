@@ -69,6 +69,7 @@ function planFixtureSaves(messages, fixtures) {
       date: message.date,
       vendor: fixture.fromName,
       kind: fixture.kind,
+      threadId: message.threadId || '',
       source: body ? 'body-pdf' : 'attachment',
       originalName: body ? withPdfExtension_(fixture.file) : fixture.file,
       attachmentName: body ? '' : fixture.file,

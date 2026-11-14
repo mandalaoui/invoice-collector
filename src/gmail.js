@@ -139,7 +139,7 @@ function buildCollectQueries(config) {
  * Dev search. Settings queries are ignored. The mailbox is limited to
  * mail this account sent with one of the fixture subjects.
  * @param {string[]} subjects
- * @param {Object} options month, today, processed_label
+ * @param {Object} options month, today, processed_label, includeProcessed
  * @return {{month: string, queries: string[]}}
  */
 function buildFixtureSearchQueries(subjects, options) {
@@ -151,13 +151,10 @@ function buildFixtureSearchQueries(subjects, options) {
       return 'subject:"' + String(subject).replace(/"/g, '') + '"';
     })
     .join(' OR ');
-  var query =
-    'in:anywhere from:me (' +
-    subjectQuery +
-    ') ' +
-    monthWindowTerm_(month) +
-    ' ' +
-    excludeProcessedTerm(source.processed_label || 'invoices/processed');
+  var query = 'in:anywhere from:me (' + subjectQuery + ') ' + monthWindowTerm_(month);
+  if (!source.includeProcessed) {
+    query += ' ' + excludeProcessedTerm(source.processed_label || 'invoices/processed');
+  }
   assertFixtureQueries_([query], list);
   return { month: month, queries: [query] };
 }
@@ -233,7 +230,7 @@ function selectCollectMessages(candidates, options) {
     if (allowed && !allowed[item.subject]) continue;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(item.dateYmd || '')) continue;
     if (item.dateYmd.slice(0, 7) !== month) continue;
-    if (hasProcessedLabel_(item.labelNames, source.processedLabel)) continue;
+    if (!source.includeProcessed && hasProcessedLabel_(item.labelNames, source.processedLabel)) continue;
     seen[item.id] = true;
     kept.push(item);
   }
@@ -302,6 +299,128 @@ function fixtureMessagesFromThread_(thread, allowed, timeZone) {
   return rows;
 }
 
+/**
+ * Counts messages handled in this run and files newly created.
+ * A run with no unlabeled messages creates nothing.
+ * @param {number} messageCount
+ * @param {Array<{created?: boolean}>} files
+ * @return {{processed: number, created: number}}
+ */
+function collectRunTotals(messageCount, files) {
+  var created = 0;
+  var rows = files || [];
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i] && rows[i].created) created++;
+  }
+  return { processed: messageCount || 0, created: created };
+}
+
+/**
+ * Threads to label. Every subject must be one of the eight fixtures.
+ * @param {Array<{threadId: string, subject: string}>} messages
+ * @param {string[]} allowedSubjects
+ * @param {string} labelName
+ * @return {Array<{threadId: string, label: string, messageCount: number}>}
+ */
+function planProcessedLabels(messages, allowedSubjects, labelName) {
+  var name = String(labelName || '').trim();
+  if (!name) throw new Error('processed_label is empty');
+  var allowed = {};
+  var list = fixtureSubjects_(allowedSubjects);
+  var i;
+  for (i = 0; i < list.length; i++) allowed[list[i]] = true;
+  var seen = {};
+  var plan = [];
+  var rows = messages || [];
+  for (i = 0; i < rows.length; i++) {
+    var message = rows[i];
+    if (!message || !allowed[message.subject]) {
+      throw new Error('Refusing to label a message that is not one of the 8 fixtures');
+    }
+    if (!message.threadId) throw new Error('Fixture message is missing a thread id');
+    if (!seen[message.threadId]) {
+      seen[message.threadId] = { threadId: message.threadId, label: name, messageCount: 0 };
+      plan.push(seen[message.threadId]);
+    }
+    seen[message.threadId].messageCount++;
+  }
+  return plan;
+}
+
+function gmailLabel_(name) {
+  var label = GmailApp.getUserLabelByName(name);
+  if (label) return label;
+  return GmailApp.createLabel(name);
+}
+
+function threadsForPlan_(plan) {
+  var threads = [];
+  for (var i = 0; i < plan.length; i++) {
+    var thread = GmailApp.getThreadById(plan[i].threadId);
+    if (!thread) throw new Error('Fixture thread was not found');
+    threads.push(thread);
+  }
+  return threads;
+}
+
+function assertThreadsAreFixtures_(threads, allowedSubjects) {
+  var allowed = {};
+  var list = fixtureSubjects_(allowedSubjects);
+  var i;
+  for (i = 0; i < list.length; i++) allowed[list[i]] = true;
+  for (i = 0; i < threads.length; i++) {
+    var messages = threads[i].getMessages();
+    if (!messages.length) throw new Error('Refusing to change a label on an empty thread');
+    for (var m = 0; m < messages.length; m++) {
+      if (!allowed[messages[m].getSubject()]) {
+        throw new Error('Refusing to change a label on a thread that contains other mail');
+      }
+    }
+  }
+}
+
+/**
+ * Adds processed_label to fixture threads only, after every message in each
+ * thread has been checked against the eight subjects.
+ * @return {number} messages labeled
+ */
+function applyProcessedLabel(messages, allowedSubjects, labelName) {
+  var plan = planProcessedLabels(messages, allowedSubjects, labelName);
+  if (!plan.length) return 0;
+  var threads = threadsForPlan_(plan);
+  assertThreadsAreFixtures_(threads, allowedSubjects);
+  var label = gmailLabel_(labelName);
+  var labeled = 0;
+  for (var i = 0; i < threads.length; i++) {
+    threads[i].addLabel(label);
+    labeled += plan[i].messageCount;
+  }
+  return labeled;
+}
+
+/**
+ * Removes processed_label from fixture threads only.
+ * @return {number} messages whose thread had the label removed
+ */
+function removeProcessedLabel(messages, allowedSubjects, labelName) {
+  var plan = planProcessedLabels(messages, allowedSubjects, labelName);
+  if (!plan.length) return 0;
+  var label = GmailApp.getUserLabelByName(String(labelName || '').trim());
+  if (!label) return 0;
+  var threads = threadsForPlan_(plan);
+  assertThreadsAreFixtures_(threads, allowedSubjects);
+  var cleared = 0;
+  for (var i = 0; i < threads.length; i++) {
+    var names = [];
+    var current = threads[i].getLabels();
+    for (var n = 0; n < current.length; n++) names.push(current[n].getName());
+    if (!hasProcessedLabel_(names, labelName)) continue;
+    threads[i].removeLabel(label);
+    cleared += plan[i].messageCount;
+  }
+  return cleared;
+}
+
 if (typeof module !== 'undefined') {
   module.exports = {
     resolveCollectMonth: resolveCollectMonth,
@@ -312,6 +431,10 @@ if (typeof module !== 'undefined') {
     buildFixtureSearchQueries: buildFixtureSearchQueries,
     assertFixtureQueries_: assertFixtureQueries_,
     selectCollectMessages: selectCollectMessages,
-    readFixtureMessages: readFixtureMessages
+    readFixtureMessages: readFixtureMessages,
+    collectRunTotals: collectRunTotals,
+    planProcessedLabels: planProcessedLabels,
+    applyProcessedLabel: applyProcessedLabel,
+    removeProcessedLabel: removeProcessedLabel
   };
 }

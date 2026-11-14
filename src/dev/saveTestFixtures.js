@@ -1,13 +1,15 @@
 /**
- * Dev only. Copies the eight fixture messages into Invoices/2026-11.
+ * Dev only. Copies unlabeled fixture messages into Invoices/2026-11,
+ * then labels those threads invoices/processed.
  * A client push does not include src/dev (.claspignore).
  *
- * 1. Settings month = 2026-11. Clear invoices_folder_id unless it already
- *    points at a folder named 2026-11.
+ * 1. Settings month = 2026-11. invoices_folder_id blank, or already the 2026-11 folder.
  * 2. npm run push:dev
- * 3. Run saveTestFixtureFiles in the Apps Script editor.
+ * 3. Run saveTestFixtureFiles. It saves the eight messages and labels them.
+ * 4. Run saveTestFixtureFiles again. processed and created are both 0.
  *
- * The run reads Gmail only through listTestFixtureMessages.
+ * To repeat the test, run clearTestFixtureLabels, then save again.
+ * Gmail is read only through listTestFixtureMessages.
  */
 
 function saveTestFixtureFiles() {
@@ -19,25 +21,62 @@ function saveTestFixtureFiles() {
         '.'
     );
   }
-  if (listed.count !== 8) {
-    throw new Error(
-      'Expected 8 fixture messages, found ' +
-        listed.count +
-        '. Run sendTestFixtures, keep month at 2026-11, and leave the invoices/processed label off these messages.'
+  var subjects = testFixtureSubjects_();
+  if (!listed.count) {
+    var all = listTestFixtureMessages({ includeProcessed: true });
+    if (!all.count) {
+      throw new Error('No fixture messages in 2026-11. Run sendTestFixtures first.');
+    }
+    var idle = collectRunTotals(0, []);
+    Logger.log(
+      'saveTestFixtureFiles processed=%s created=%s alreadyProcessed=%s',
+      idle.processed,
+      idle.created,
+      all.count
     );
+    return {
+      path: 'Invoices/' + listed.month,
+      folderId: getConfig().invoices_folder_id || '',
+      processed: idle.processed,
+      created: idle.created,
+      labeled: 0,
+      alreadyProcessed: all.count,
+      files: []
+    };
   }
-  var folder = ensureMonthFolder(getConfig().invoices_folder_id, listed.month);
+  var config = getConfig();
+  var folder = ensureMonthFolder(config.invoices_folder_id, listed.month);
   var folderId = rememberInvoicesFolderId(folder.getId());
   var plans = planFixtureSaves(listed.messages, TEST_FIXTURE_MESSAGES);
-  if (plans.length !== 8) throw new Error('Refusing to save because a fixture subject is missing');
+  if (plans.length !== listed.count) throw new Error('Refusing to save because a fixture subject is missing');
   var files = savePlannedCopies(plans, folder, readFixtureSource_);
-  Logger.log('saveTestFixtureFiles %s files in Invoices/%s (%s)', files.length, listed.month, folderId);
+  if (files.length !== plans.length) throw new Error('Refusing to label because a file was not saved');
+  var totals = collectRunTotals(plans.length, files);
+  var labeled = applyProcessedLabel(plans, subjects, config.processed_label);
+  Logger.log(
+    'saveTestFixtureFiles processed=%s created=%s labeled=%s folder=%s',
+    totals.processed,
+    totals.created,
+    labeled,
+    folderId
+  );
   return {
     path: 'Invoices/' + listed.month,
     folderId: folderId,
-    count: files.length,
+    processed: totals.processed,
+    created: totals.created,
+    labeled: labeled,
+    alreadyProcessed: 0,
     files: files
   };
+}
+
+function testFixtureSubjects_() {
+  var subjects = [];
+  for (var i = 0; i < TEST_FIXTURE_MESSAGES.length; i++) {
+    subjects.push(TEST_FIXTURE_MESSAGES[i].subject);
+  }
+  return subjects;
 }
 
 function readFixtureSource_(plan) {

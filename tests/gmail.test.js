@@ -128,3 +128,83 @@ test('selection keeps the fixture month, skips processed mail, and drops anythin
     ['ok-early', 'dup', 'ok-late']
   );
 });
+
+test('a processed fixture is skipped, and the clear search can still see it', () => {
+  const candidates = subjects.map((subject, index) => ({
+    id: 'id' + index,
+    threadId: 'th' + index,
+    subject: subject,
+    dateYmd: '2026-11-02',
+    labelNames: ['invoices/processed']
+  }));
+  const skipped = gmail.selectCollectMessages(candidates, {
+    month: '2026-11',
+    processedLabel: 'invoices/processed',
+    allowedSubjects: subjects
+  });
+  assert.equal(skipped.length, 0);
+  const found = gmail.selectCollectMessages(candidates, {
+    month: '2026-11',
+    processedLabel: 'invoices/processed',
+    allowedSubjects: subjects,
+    includeProcessed: true
+  });
+  assert.equal(found.length, 8);
+
+  const plan = gmail.buildFixtureSearchQueries(subjects, {
+    month: '2026-11',
+    today: '2026-11-14',
+    processed_label: 'invoices/processed',
+    includeProcessed: true
+  });
+  assert.equal(plan.queries[0].includes('-label:'), false);
+  assert.match(plan.queries[0], /^in:anywhere from:me \(/);
+  subjects.forEach((subject) => {
+    assert.equal(plan.queries[0].includes('subject:"' + subject + '"'), true);
+  });
+});
+
+test('a second run processes no messages and creates no files', () => {
+  const first = gmail.collectRunTotals(8, subjects.map(() => ({ created: true })));
+  assert.deepEqual(first, { processed: 8, created: 8 });
+  const kept = gmail.collectRunTotals(8, subjects.map(() => ({ created: false })));
+  assert.deepEqual(kept, { processed: 8, created: 0 });
+  assert.deepEqual(gmail.collectRunTotals(0, []), { processed: 0, created: 0 });
+});
+
+test('labels are planned only for fixture threads', () => {
+  const messages = subjects.map((subject, index) => ({
+    threadId: 'th' + index,
+    subject: subject
+  }));
+  messages.push({ threadId: 'th0', subject: subjects[0] });
+  const plan = gmail.planProcessedLabels(messages, subjects, 'invoices/processed');
+  assert.equal(plan.length, 8);
+  assert.equal(plan[0].messageCount, 2);
+  assert.equal(plan[0].label, 'invoices/processed');
+  assert.throws(
+    () => gmail.planProcessedLabels(
+      [{ threadId: 'x', subject: 'Your bank statement' }],
+      subjects,
+      'invoices/processed'
+    ),
+    /not one of the 8 fixtures/
+  );
+  assert.throws(
+    () => gmail.planProcessedLabels([{ subject: subjects[0] }], subjects, 'invoices/processed'),
+    /thread id/
+  );
+});
+
+test('the label helper only lists the fixtures and the save labels them', () => {
+  const root = path.join(__dirname, '..', 'src', 'dev');
+  const clear = fs.readFileSync(path.join(root, 'clearTestFixtureLabels.js'), 'utf8');
+  const save = fs.readFileSync(path.join(root, 'saveTestFixtures.js'), 'utf8');
+  assert.match(clear, /listTestFixtureMessages\(\{ includeProcessed: true \}\)/);
+  assert.match(clear, /removeProcessedLabel\(/);
+  assert.equal(clear.includes('GmailApp.search'), false);
+  assert.equal(clear.includes('has:attachment'), false);
+  assert.match(save, /applyProcessedLabel\(/);
+  assert.match(save, /collectRunTotals\(0, \[\]\)/);
+  assert.equal(save.includes('GmailApp.search'), false);
+});
