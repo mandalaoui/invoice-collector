@@ -190,7 +190,7 @@ var SETTINGS_FIELDS = [
     key: 'invoices_folder_id',
     value: '',
     type: 'string',
-    note: 'Drive folder id. Monthly files go in Invoices/YYYY-MM under this folder.'
+    note: 'Id of the Invoices/YYYY-MM folder copies are saved into. Empty: create Invoices/YYYY-MM in My Drive and store that folder id.'
   },
   {
     key: 'queue_folder_id',
