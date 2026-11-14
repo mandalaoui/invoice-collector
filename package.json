@@ -3,7 +3,8 @@
   "private": true,
   "scripts": {
     "push": "clasp push",
-    "test": "node --test"
+    "push:dev": "clasp push --ignore .claspignore.dev",
+    "test": "node --test && python tests/test_fixtures.py"
   },
   "devDependencies": {
     "@google/clasp": "3.4.1"

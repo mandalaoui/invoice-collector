@@ -1,0 +1,5 @@
+# Local fixture generator only. Not used by the Apps Script.
+fpdf2==2.9.0
+uharfbuzz==0.57.0
+pillow==13.0.0
+pymupdf==1.26.4

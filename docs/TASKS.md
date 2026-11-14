@@ -3,10 +3,10 @@
 ## Phase 0 — Setup
 - [x] 0.1 Create repo structure (`src/`, `tests/fixtures/`, `worker/`), `clasp` project bound to a test Google account. Done when: `clasp push` works. ✅
 - [x] 0.2 Create the Sheet with tabs `Invoices, RunLog, Comparison, AnswerKey, Settings` + `config.js` that reads Settings. Done when: `getConfig()` returns all keys. ✅
-- [ ] 0.3 Test data: 5–10 anonymized invoices (PDF text, scanned PDF, image, email body) sent to the test Gmail. Done when: fixtures exist.
+- [x] 0.3 Test data: 8 fictional fixtures in `tests/fixtures/` plus `expected.json`. Regenerate with `python scripts/generate_fixtures.py`. On the test account, `npm run push:dev` then run `sendTestFixtures`. ✅
 
 ## Phase 1 — Pipeline skeleton (no extraction yet)
-- [ ] 1.1 `gmail.js`: search by month + queries, skip processed. Done when: lists test messages.
+- [x] 1.1 `gmail.js`: search by month + queries, skip processed. Done when: lists test messages. ✅
 - [ ] 1.2 `drive.js`: save originals to `Invoices/YYYY-MM/` with naming rule; email body → PDF. Done when: all test files appear, unchanged.
 - [ ] 1.3 Labels + idempotency. Done when: second run creates 0 new files.
 - [ ] 1.4 `RunLog` + batching for the 6-minute limit. Done when: run logs counts and resumes.
