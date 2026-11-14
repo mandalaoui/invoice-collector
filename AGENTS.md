@@ -33,8 +33,11 @@ Read `docs/SPEC.md` for behavior, `docs/TASKS.md` for the current task, and `doc
 3. Write code + a test (pure-function tests with sample text fixtures in `tests/fixtures/`).
 4. Run tests. Report what passed and what to check manually.
 5. Mark the task ✅ in `docs/TASKS.md`. Keep changes small.
+6. Add a dev-only Apps Script function `test<TaskName>()` in `src/dev/`. It runs the full manual verification in one run, logs each step, restores any settings it changed, and ends with PASS or FAIL plus details.
+7. After the task, commit and git push.
 
 ## Do not
 - Add dependencies or services without asking.
 - Use real client data in fixtures; use anonymized samples.
 - Refactor unrelated code.
+- Never run `clasp push`. The developer runs `npm run push:dev`.
