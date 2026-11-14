@@ -1,17 +1,11 @@
 /**
  * RunLog rows and the resume cursor.
- * One row per run. The cursor is the next fixture index to process.
+ * One row per run. Progress is the processed label, not a list index.
+ * The cursor stored on the row is the last message id handled in that run.
  */
 
 var COLLECT_CURSOR_PROPERTY = 'COLLECT_CURSOR';
 var RUN_TIME_BUDGET_MS = 5 * 60 * 1000;
-
-function parseCursor(value) {
-  if (value == null || value === '') return 0;
-  var number = Number(value);
-  if (!isFinite(number) || number < 0) return 0;
-  return Math.floor(number);
-}
 
 function normalizeBatchSize(value, fallback) {
   var number = Number(value);
@@ -19,45 +13,35 @@ function normalizeBatchSize(value, fallback) {
   return Math.floor(number);
 }
 
-function hasUnprocessedFrom_(items, start) {
-  for (var i = start; i < items.length; i++) {
-    if (!items[i].processed) return true;
-  }
-  return false;
-}
-
 /**
- * Takes the next batch of unlabeled items. Cursor is an index into items.
- * An empty nextCursor means the queue is finished.
- * @param {Array<{processed?: boolean}>} items
- * @param {string|number} savedCursor
+ * Next unlabeled messages, in list order. Labels are the progress marker,
+ * so a saved index is not applied to this list.
+ * @param {Array<{id?: string, processed?: boolean}>} items
  * @param {number} batchSize
- * @return {{batch: Array<{index: number, item: Object}>, start: number, nextCursor: string, done: boolean}}
+ * @return {{batch: Array<{index: number, item: Object}>, nextCursor: string, done: boolean}}
  */
-function planBatch(items, savedCursor, batchSize) {
+function planBatch(items, batchSize) {
   var rows = items || [];
-  var total = rows.length;
-  var size = normalizeBatchSize(batchSize, total || 1);
-  var start = parseCursor(savedCursor);
-  if (start > total) start = 0;
-  if (!hasUnprocessedFrom_(rows, start)) {
-    if (start === 0 || !hasUnprocessedFrom_(rows, 0)) {
-      return { batch: [], start: 0, nextCursor: '', done: true };
-    }
-    start = 0;
-  }
+  var size = normalizeBatchSize(batchSize, rows.length || 1);
   var batch = [];
-  var index = start;
-  while (index < total && batch.length < size) {
-    if (!rows[index].processed) batch.push({ index: index, item: rows[index] });
-    index++;
+  var i;
+  for (i = 0; i < rows.length && batch.length < size; i++) {
+    if (rows[i].processed) continue;
+    batch.push({ index: i, item: rows[i] });
   }
-  var done = !hasUnprocessedFrom_(rows, index);
+  var taken = {};
+  for (i = 0; i < batch.length; i++) taken[batch[i].item.id] = true;
+  var more = false;
+  for (i = 0; i < rows.length; i++) {
+    if (rows[i].processed || taken[rows[i].id]) continue;
+    more = true;
+    break;
+  }
+  var last = batch.length ? batch[batch.length - 1].item : null;
   return {
     batch: batch,
-    start: start,
-    nextCursor: done ? '' : String(index),
-    done: done
+    nextCursor: more && last && last.id ? String(last.id) : '',
+    done: !more
   };
 }
 
@@ -71,17 +55,25 @@ function runShouldStop(startedMs, nowMs, budgetMs, processedCount, batchSize) {
   return '';
 }
 
+/** A bare number is the old list index. It is not a message id. */
+function messageIdCursor_(value) {
+  var text = value == null ? '' : String(value).trim();
+  if (!text || /^\d+$/.test(text)) return '';
+  return text;
+}
+
 /**
+ * Last message id on an unfinished run. Index cursors are ignored.
  * @param {Object|null} entry last RunLog row
- * @return {number}
+ * @return {string}
  */
 function resumeCursor(entry) {
-  if (!entry) return 0;
+  if (!entry) return '';
   var status = String(entry.status || '');
   if (status === 'partial' || status === 'running' || status === 'error') {
-    return parseCursor(entry.cursor);
+    return messageIdCursor_(entry.cursor);
   }
-  return 0;
+  return '';
 }
 
 /**
@@ -135,7 +127,7 @@ function readLastRunLogEntry_() {
 
 function loadCollectCursor_() {
   var raw = PropertiesService.getScriptProperties().getProperty(COLLECT_CURSOR_PROPERTY);
-  if (raw != null && raw !== '') return parseCursor(raw);
+  if (raw != null && raw !== '') return messageIdCursor_(raw);
   return resumeCursor(readLastRunLogEntry_());
 }
 
@@ -155,7 +147,6 @@ if (typeof module !== 'undefined') {
   module.exports = {
     COLLECT_CURSOR_PROPERTY: COLLECT_CURSOR_PROPERTY,
     RUN_TIME_BUDGET_MS: RUN_TIME_BUDGET_MS,
-    parseCursor: parseCursor,
     normalizeBatchSize: normalizeBatchSize,
     planBatch: planBatch,
     runShouldStop: runShouldStop,

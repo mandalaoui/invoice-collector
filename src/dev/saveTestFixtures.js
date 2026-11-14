@@ -6,9 +6,9 @@
  * 2. Set batch_size to 3 to test resume. Leave it at 20 to finish in one run.
  * 3. npm run push:dev
  * 4. Run clearTestFixtureLabels if these messages are already labeled.
- * 5. Run saveTestFixtureFiles. With batch size 3 the first row is partial, cursor 3.
- * 6. Run it again (cursor 6), then again (status ok, cursor empty).
- * 7. One more run processes 0 messages and creates 0 files.
+ * 5. Run saveTestFixtureFiles three times. Counts are 3, then 3, then 2.
+ *    The first two rows are partial. The third is ok and the cursor is empty.
+ * 6. One more run processes 0 messages and creates 0 files.
  *
  * Gmail is read only through listTestFixtureMessages. Each run stops before
  * 6 minutes and leaves the cursor for the next run.
@@ -33,7 +33,7 @@ function saveTestFixtureFiles() {
   }
   var subjects = testFixtureSubjects_();
   var batchSize = normalizeBatchSize(config.batch_size, listed.count);
-  var plan = planBatch(listed.messages, loadCollectCursor_(), batchSize);
+  var plan = planBatch(listed.messages, batchSize);
   var started = new Date();
   var entry = {
     startedAt: started,
@@ -44,7 +44,7 @@ function saveTestFixtureFiles() {
     rows: 0,
     errors: '',
     status: plan.done ? 'ok' : 'running',
-    cursor: plan.done ? '' : String(plan.start)
+    cursor: ''
   };
   if (plan.done) {
     clearCollectCursor_();
@@ -70,16 +70,17 @@ function saveTestFixtureFiles() {
   var folderId = config.invoices_folder_id || '';
   var files = [];
   var labeled = 0;
-  var cursor = String(plan.start);
+  var cursor = '';
   var errors = '';
-  var failedIndex = plan.start;
+  var failedId = '';
+  var stoppedEarly = false;
   try {
     var folder = ensureMonthFolder(folderId, listed.month);
     folderId = rememberInvoicesFolderId(folder.getId());
     for (var i = 0; i < plan.batch.length; i++) {
-      failedIndex = plan.batch[i].index;
+      failedId = String(plan.batch[i].item.id || '');
       if (runShouldStop(started.getTime(), Date.now(), RUN_TIME_BUDGET_MS, i, batchSize) === 'time') {
-        cursor = String(plan.batch[i].index);
+        stoppedEarly = true;
         break;
       }
       var plans = planFixtureSaves([plan.batch[i].item], TEST_FIXTURE_MESSAGES);
@@ -88,7 +89,7 @@ function saveTestFixtureFiles() {
       if (saved.length !== 1) throw new Error('Refusing to label because a file was not saved');
       labeled += applyProcessedLabel(plans, subjects, config.processed_label);
       files.push(saved[0]);
-      cursor = i + 1 < plan.batch.length ? String(plan.batch[i + 1].index) : plan.nextCursor;
+      cursor = failedId;
       saveCollectCursor_(cursor);
       entry.messages = labeled;
       entry.files = collectRunTotals(labeled, files).created;
@@ -98,26 +99,27 @@ function saveTestFixtureFiles() {
     }
   } catch (error) {
     errors = String(error && error.message ? error.message : error).slice(0, 500);
-    cursor = String(failedIndex);
+    cursor = failedId;
     saveCollectCursor_(cursor);
   }
   var totals = collectRunTotals(labeled, files);
+  var finished = !errors && !stoppedEarly && plan.done;
   entry.finishedAt = new Date();
   entry.messages = totals.processed;
   entry.files = totals.created;
   entry.rows = 0;
   entry.errors = errors;
-  entry.cursor = cursor;
-  entry.status = errors ? 'error' : cursor ? 'partial' : 'ok';
-  if (entry.status === 'ok') clearCollectCursor_();
-  else saveCollectCursor_(cursor);
+  entry.status = errors ? 'error' : finished ? 'ok' : 'partial';
+  entry.cursor = finished ? '' : cursor;
+  if (finished) clearCollectCursor_();
+  else saveCollectCursor_(entry.cursor);
   updateRunLog_(logRow, entry);
   Logger.log(
     'saveTestFixtureFiles processed=%s created=%s status=%s cursor=%s',
     totals.processed,
     totals.created,
     entry.status,
-    cursor
+    entry.cursor
   );
   return {
     path: 'Invoices/' + listed.month,
@@ -126,7 +128,7 @@ function saveTestFixtureFiles() {
     created: totals.created,
     labeled: labeled,
     status: entry.status,
-    cursor: cursor,
+    cursor: entry.cursor,
     batchSize: batchSize,
     logRow: logRow,
     errors: errors,

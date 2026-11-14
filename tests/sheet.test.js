@@ -12,42 +12,32 @@ function fixtures(flags) {
   }));
 }
 
-test('batch size 3 resumes through the eight fixtures', () => {
-  const items = fixtures([false, false, false, false, false, false, false, false]);
-  const first = sheet.planBatch(items, '', 3);
-  assert.deepEqual(first.batch.map((row) => row.index), [0, 1, 2]);
-  assert.equal(first.nextCursor, '3');
-  assert.equal(first.done, false);
-
-  const second = sheet.planBatch(items, first.nextCursor, 3);
-  assert.deepEqual(second.batch.map((row) => row.index), [3, 4, 5]);
-  assert.equal(second.nextCursor, '6');
-
-  const third = sheet.planBatch(items, second.nextCursor, 3);
-  assert.deepEqual(third.batch.map((row) => row.index), [6, 7]);
-  assert.equal(third.nextCursor, '');
-  assert.equal(third.done, true);
-
-  const done = sheet.planBatch(fixtures([true, true, true, true, true, true, true, true]), '', 3);
-  assert.deepEqual(done.batch, []);
-  assert.equal(done.done, true);
-  assert.equal(done.nextCursor, '');
+test('labels applied between runs yield batches of 3, 3, and 2', () => {
+  let remaining = fixtures([false, false, false, false, false, false, false, false]);
+  const counts = [];
+  const cursors = [];
+  for (let run = 0; run < 4; run++) {
+    const plan = sheet.planBatch(remaining, 3);
+    counts.push(plan.batch.length);
+    cursors.push(plan.nextCursor);
+    if (!plan.batch.length) break;
+    const doneIds = new Set(plan.batch.map((row) => row.item.id));
+    remaining = remaining.filter((item) => !doneIds.has(item.id));
+  }
+  assert.deepEqual(counts, [3, 3, 2, 0]);
+  assert.deepEqual(cursors, ['m2', 'm5', '', '']);
+  assert.equal(remaining.length, 0);
 });
 
-test('a finished cursor does not reprocess, and a stale cursor restarts', () => {
-  const labeled = fixtures([true, true, true, true, true, true, true, true]);
-  assert.equal(sheet.planBatch(labeled, '6', 3).done, true);
-
-  const tail = fixtures([false, false, false, false, false, false, false, false]);
-  const resumed = sheet.planBatch(tail, '6', 3);
-  assert.deepEqual(resumed.batch.map((row) => row.index), [6, 7]);
-  assert.equal(resumed.done, true);
-  assert.equal(resumed.nextCursor, '');
-
-  const earlier = fixtures([false, false, false, true, true, true, true, true]);
-  const fromStart = sheet.planBatch(earlier, '6', 3);
-  assert.deepEqual(fromStart.batch.map((row) => row.index), [0, 1, 2]);
-  assert.equal(fromStart.nextCursor, '');
+test('a stale index cursor does not skip the unlabeled tail', () => {
+  const labeled = fixtures([true, true, true, true, true, true, false, false]);
+  const tail = sheet.planBatch(labeled, 3);
+  assert.deepEqual(tail.batch.map((row) => row.item.id), ['m6', 'm7']);
+  assert.equal(tail.done, true);
+  assert.equal(tail.nextCursor, '');
+  assert.equal(sheet.resumeCursor({ status: 'partial', cursor: '6' }), '');
+  assert.equal(sheet.resumeCursor({ status: 'partial', cursor: 'm6' }), 'm6');
+  assert.equal(sheet.planBatch(fixtures([true, true, true, true, true, true, true, true]), 3).done, true);
 });
 
 test('the time budget stops a run before the batch is full', () => {
@@ -68,7 +58,7 @@ test('RunLog rows match the sheet headers and resume only from an open run', () 
     rows: 0,
     errors: '',
     status: 'partial',
-    cursor: '3'
+    cursor: 'm2'
   });
   assert.deepEqual(row, [
     '2026-11-15T00:00:00',
@@ -79,15 +69,11 @@ test('RunLog rows match the sheet headers and resume only from an open run', () 
     0,
     '',
     'partial',
-    '3'
+    'm2'
   ]);
   assert.equal(row.length, config.RUN_LOG_HEADERS.length);
-  assert.equal(sheet.resumeCursor({ status: 'partial', cursor: '3' }), 3);
-  assert.equal(sheet.resumeCursor({ status: 'running', cursor: 6 }), 6);
-  assert.equal(sheet.resumeCursor({ status: 'error', cursor: '4' }), 4);
-  assert.equal(sheet.resumeCursor({ status: 'ok', cursor: '8' }), 0);
-  assert.equal(sheet.resumeCursor(null), 0);
-  assert.equal(sheet.parseCursor(''), 0);
+  assert.equal(sheet.resumeCursor({ status: 'ok', cursor: 'm8' }), '');
+  assert.equal(sheet.resumeCursor(null), '');
 });
 
 test('the dev save logs a batch and does not search the mailbox', () => {
@@ -100,7 +86,8 @@ test('the dev save logs a batch and does not search the mailbox', () => {
     'utf8'
   );
   assert.match(source, /listTestFixtureMessages\(\{ includeProcessed: true \}\)/);
-  assert.match(source, /planBatch\(/);
+  assert.match(source, /planBatch\(listed\.messages, batchSize\)/);
+  assert.equal(source.includes('loadCollectCursor_'), false);
   assert.match(source, /beginRunLog_\(/);
   assert.match(source, /collectRunTotals\(0, \[\]\)/);
   assert.match(clear, /clearCollectCursor_\(\)/);
