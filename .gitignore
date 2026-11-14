@@ -1,0 +1,14 @@
+node_modules/
+
+# clasp OAuth tokens (the script id in .clasp.json is not a secret)
+.clasprc.json
+.clasprc/
+
+.env
+.env.*
+credentials.json
+client_secret*.json
+gcp-oauth.keys.json
+token.json
+service-account*.json
+*.pem

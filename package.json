@@ -1,0 +1,11 @@
+{
+  "name": "invoice-collector",
+  "private": true,
+  "scripts": {
+    "push": "clasp push",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "@google/clasp": "3.4.1"
+  }
+}
