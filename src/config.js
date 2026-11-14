@@ -238,7 +238,7 @@ var SETTINGS_FIELDS = [
     key: 'batch_size',
     value: 20,
     type: 'number',
-    note: 'Messages per run before the cursor is saved. Use 3 to test resume on the 8 fixtures. The run also stops short of the 6-minute limit.'
+    note: 'Unlabeled messages saved per run. Use 3 to test resume on the 8 fixtures. Labels are the only progress state. The run also stops short of the 6-minute limit.'
   },
   {
     key: 'processed_label',

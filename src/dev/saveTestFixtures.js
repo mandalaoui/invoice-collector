@@ -7,11 +7,12 @@
  * 3. npm run push:dev
  * 4. Run clearTestFixtureLabels if these messages are already labeled.
  * 5. Run saveTestFixtureFiles three times. Counts are 3, then 3, then 2.
- *    The first two rows are partial. The third is ok and the cursor is empty.
+ *    The first two rows are partial. The third is ok.
  * 6. One more run processes 0 messages and creates 0 files.
  *
- * Gmail is read only through listTestFixtureMessages. Each run stops before
- * 6 minutes and leaves the cursor for the next run.
+ * Gmail is read only through listTestFixtureMessages. Each run takes the
+ * first batch_size unlabeled fixtures. Labels are the only progress state.
+ * A short tail is still saved. A message id is not a resume point.
  */
 
 function saveTestFixtureFiles() {
@@ -33,7 +34,9 @@ function saveTestFixtureFiles() {
   }
   var subjects = testFixtureSubjects_();
   var batchSize = normalizeBatchSize(config.batch_size, listed.count);
-  var plan = planBatch(listed.messages, batchSize);
+  var selection = fixtureRunSelection(listed.messages, batchSize);
+  logFixtureSelection_(selection.rows);
+  clearCollectCursor_();
   var started = new Date();
   var entry = {
     startedAt: started,
@@ -43,11 +46,10 @@ function saveTestFixtureFiles() {
     files: 0,
     rows: 0,
     errors: '',
-    status: plan.done ? 'ok' : 'running',
+    status: selection.idle ? 'ok' : 'running',
     cursor: ''
   };
-  if (plan.done) {
-    clearCollectCursor_();
+  if (selection.idle) {
     entry.finishedAt = new Date();
     var idle = collectRunTotals(0, []);
     var idleRow = beginRunLog_(entry);
@@ -70,56 +72,47 @@ function saveTestFixtureFiles() {
   var folderId = config.invoices_folder_id || '';
   var files = [];
   var labeled = 0;
-  var cursor = '';
   var errors = '';
-  var failedId = '';
   var stoppedEarly = false;
   try {
     var folder = ensureMonthFolder(folderId, listed.month);
     folderId = rememberInvoicesFolderId(folder.getId());
-    for (var i = 0; i < plan.batch.length; i++) {
-      failedId = String(plan.batch[i].item.id || '');
+    for (var i = 0; i < selection.batch.length; i++) {
       if (runShouldStop(started.getTime(), Date.now(), RUN_TIME_BUDGET_MS, i, batchSize) === 'time') {
         stoppedEarly = true;
         break;
       }
-      var plans = planFixtureSaves([plan.batch[i].item], TEST_FIXTURE_MESSAGES);
+      var plans = planFixtureSaves([selection.batch[i].item], TEST_FIXTURE_MESSAGES);
       if (plans.length !== 1) throw new Error('Refusing to save because a fixture subject is missing');
       var saved = savePlannedCopies(plans, folder, readFixtureSource_);
       if (saved.length !== 1) throw new Error('Refusing to label because a file was not saved');
       labeled += applyProcessedLabel(plans, subjects, config.processed_label);
       files.push(saved[0]);
-      cursor = failedId;
-      saveCollectCursor_(cursor);
       entry.messages = labeled;
       entry.files = collectRunTotals(labeled, files).created;
       entry.status = 'running';
-      entry.cursor = cursor;
+      entry.cursor = '';
       updateRunLog_(logRow, entry);
     }
   } catch (error) {
     errors = String(error && error.message ? error.message : error).slice(0, 500);
-    cursor = failedId;
-    saveCollectCursor_(cursor);
   }
   var totals = collectRunTotals(labeled, files);
-  var finished = !errors && !stoppedEarly && plan.done;
+  var finished = !errors && !stoppedEarly && selection.finishes;
   entry.finishedAt = new Date();
   entry.messages = totals.processed;
   entry.files = totals.created;
   entry.rows = 0;
   entry.errors = errors;
   entry.status = errors ? 'error' : finished ? 'ok' : 'partial';
-  entry.cursor = finished ? '' : cursor;
-  if (finished) clearCollectCursor_();
-  else saveCollectCursor_(entry.cursor);
+  entry.cursor = '';
+  clearCollectCursor_();
   updateRunLog_(logRow, entry);
   Logger.log(
-    'saveTestFixtureFiles processed=%s created=%s status=%s cursor=%s',
+    'saveTestFixtureFiles processed=%s created=%s status=%s cursor=unused',
     totals.processed,
     totals.created,
-    entry.status,
-    entry.cursor
+    entry.status
   );
   return {
     path: 'Invoices/' + listed.month,
@@ -134,6 +127,23 @@ function saveTestFixtureFiles() {
     errors: errors,
     files: files
   };
+}
+
+function logFixtureSelection_(rows) {
+  var list = rows || [];
+  Logger.log('saveTestFixtureFiles progress=labels cursor=unused count=%s', list.length);
+  for (var i = 0; i < list.length; i++) {
+    var row = list[i];
+    Logger.log(
+      'saveTestFixtureFiles fixture subject=%s threadId=%s messageId=%s hasLabel=%s decision=%s reason=%s',
+      row.subject,
+      row.threadId,
+      row.messageId,
+      row.hasLabel,
+      row.decision,
+      row.reason
+    );
+  }
 }
 
 function testFixtureSubjects_() {

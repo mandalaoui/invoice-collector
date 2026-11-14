@@ -1,7 +1,8 @@
 /**
- * RunLog rows and the resume cursor.
- * One row per run. Progress is the processed label, not a list index.
- * The cursor stored on the row is the last message id handled in that run.
+ * RunLog rows.
+ * One row per run. The processed label is the only progress state.
+ * A run takes the first batch of unlabeled messages. It does not resume
+ * from a message id or a list index.
  */
 
 var COLLECT_CURSOR_PROPERTY = 'COLLECT_CURSOR';
@@ -14,11 +15,13 @@ function normalizeBatchSize(value, fallback) {
 }
 
 /**
- * Next unlabeled messages, in list order. Labels are the progress marker,
- * so a saved index is not applied to this list.
+ * First unlabeled messages, in list order, up to batchSize.
+ * `done` means there is nothing to process. `finishes` means this batch
+ * includes every unlabeled message, including a short tail.
+ * A message id is not an input. Sharing a threadId does not skip a message.
  * @param {Array<{id?: string, processed?: boolean}>} items
  * @param {number} batchSize
- * @return {{batch: Array<{index: number, item: Object}>, nextCursor: string, done: boolean}}
+ * @return {{batch: Array<{index: number, item: Object}>, nextCursor: string, done: boolean, finishes: boolean}}
  */
 function planBatch(items, batchSize) {
   var rows = items || [];
@@ -37,11 +40,82 @@ function planBatch(items, batchSize) {
     more = true;
     break;
   }
-  var last = batch.length ? batch[batch.length - 1].item : null;
   return {
     batch: batch,
-    nextCursor: more && last && last.id ? String(last.id) : '',
-    done: !more
+    nextCursor: '',
+    done: batch.length === 0,
+    finishes: !more
+  };
+}
+
+/**
+ * Why each fixture is in this run or not. Labels decide. No cursor.
+ * @param {Array<{id?: string, threadId?: string, subject?: string, processed?: boolean}>} items
+ * @param {number} batchSize
+ * @return {{rows: Array<Object>, batch: Array<Object>, idle: boolean, finishes: boolean, selectedIds: string[]}}
+ */
+function describeFixtureBatch(items, batchSize) {
+  var plan = planBatch(items, batchSize);
+  var selected = {};
+  var i;
+  for (i = 0; i < plan.batch.length; i++) selected[String(plan.batch[i].item.id)] = true;
+  var rows = [];
+  var list = items || [];
+  for (i = 0; i < list.length; i++) {
+    var item = list[i] || {};
+    var hasLabel = !!item.processed;
+    var id = item.id == null ? '' : String(item.id);
+    var decision = 'skipped';
+    var reason;
+    if (hasLabel) reason = 'has processed label';
+    else if (selected[id]) {
+      decision = 'selected';
+      reason = 'unlabeled, within first batch_size';
+    } else reason = 'unlabeled, after the first batch_size';
+    rows.push({
+      subject: item.subject == null ? '' : String(item.subject),
+      threadId: item.threadId == null ? '' : String(item.threadId),
+      messageId: id,
+      hasLabel: hasLabel,
+      decision: decision,
+      reason: reason
+    });
+  }
+  var selectedIds = [];
+  for (i = 0; i < plan.batch.length; i++) selectedIds.push(String(plan.batch[i].item.id));
+  return {
+    rows: rows,
+    batch: plan.batch,
+    idle: plan.done,
+    finishes: plan.finishes,
+    selectedIds: selectedIds
+  };
+}
+
+/**
+ * One run with no time limit: the first unlabeled batch, or nothing.
+ * A short tail is processed. `finishes` does not mean the run is idle.
+ * @return {{processed: number, status: string, idle: boolean, finishes: boolean, rows: Array<Object>, batch: Array<Object>}}
+ */
+function fixtureRunSelection(items, batchSize) {
+  var described = describeFixtureBatch(items, batchSize);
+  if (described.idle) {
+    return {
+      processed: 0,
+      status: 'ok',
+      idle: true,
+      finishes: true,
+      rows: described.rows,
+      batch: []
+    };
+  }
+  return {
+    processed: described.batch.length,
+    status: described.finishes ? 'ok' : 'partial',
+    idle: false,
+    finishes: described.finishes,
+    rows: described.rows,
+    batch: described.batch
   };
 }
 
@@ -149,6 +223,8 @@ if (typeof module !== 'undefined') {
     RUN_TIME_BUDGET_MS: RUN_TIME_BUDGET_MS,
     normalizeBatchSize: normalizeBatchSize,
     planBatch: planBatch,
+    describeFixtureBatch: describeFixtureBatch,
+    fixtureRunSelection: fixtureRunSelection,
     runShouldStop: runShouldStop,
     resumeCursor: resumeCursor,
     buildRunLogRow: buildRunLogRow

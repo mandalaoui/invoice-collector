@@ -2,7 +2,7 @@
  * Dev only. Removes invoices/processed from the eight fixture threads.
  * A client push does not include src/dev (.claspignore).
  *
- * Settings month must be 2026-11. This also clears the resume cursor.
+ * Settings month must be 2026-11. This also deletes any leftover cursor property.
  * Run clearTestFixtureLabels, then saveTestFixtureFiles again.
  * Other mail is not searched or changed.
  */

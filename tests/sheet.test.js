@@ -15,29 +15,77 @@ function fixtures(flags) {
 test('labels applied between runs yield batches of 3, 3, and 2', () => {
   let remaining = fixtures([false, false, false, false, false, false, false, false]);
   const counts = [];
-  const cursors = [];
+  const statuses = [];
   for (let run = 0; run < 4; run++) {
-    const plan = sheet.planBatch(remaining, 3);
-    counts.push(plan.batch.length);
-    cursors.push(plan.nextCursor);
-    if (!plan.batch.length) break;
-    const doneIds = new Set(plan.batch.map((row) => row.item.id));
-    remaining = remaining.filter((item) => !doneIds.has(item.id));
+    const selection = sheet.fixtureRunSelection(remaining, 3);
+    counts.push(selection.processed);
+    statuses.push(selection.status);
+    assert.equal(selection.rows.length, remaining.length);
+    if (selection.idle) break;
+    const doneIds = new Set(selection.batch.map((row) => row.item.id));
+    remaining = remaining.map((item) => (
+      doneIds.has(item.id) ? { ...item, processed: true } : item
+    ));
   }
   assert.deepEqual(counts, [3, 3, 2, 0]);
-  assert.deepEqual(cursors, ['m2', 'm5', '', '']);
-  assert.equal(remaining.length, 0);
+  assert.deepEqual(statuses, ['partial', 'partial', 'ok', 'ok']);
+  assert.equal(remaining.every((item) => item.processed), true);
 });
 
-test('a stale index cursor does not skip the unlabeled tail', () => {
-  const labeled = fixtures([true, true, true, true, true, true, false, false]);
-  const tail = sheet.planBatch(labeled, 3);
-  assert.deepEqual(tail.batch.map((row) => row.item.id), ['m6', 'm7']);
-  assert.equal(tail.done, true);
-  assert.equal(tail.nextCursor, '');
-  assert.equal(sheet.resumeCursor({ status: 'partial', cursor: '6' }), '');
-  assert.equal(sheet.resumeCursor({ status: 'partial', cursor: 'm6' }), 'm6');
-  assert.equal(sheet.planBatch(fixtures([true, true, true, true, true, true, true, true]), 3).done, true);
+test('the two unlabeled fixtures are saved when they are a short tail', () => {
+  const tail = [
+    { id: '1a1db3eb8409f450', threadId: 'thread-a', subject: 'Fixture one', processed: true },
+    { id: '1a1db3eb8409f451', threadId: 'thread-b', subject: 'Fixture two', processed: true },
+    { id: '1a1db3eb8409f452', threadId: 'thread-c', subject: 'Fixture three', processed: true },
+    { id: '1a1db3eb8409f453', threadId: 'thread-d', subject: 'Fixture four', processed: true },
+    { id: '1a1db3eb8409f454', threadId: 'thread-e', subject: 'Fixture five', processed: true },
+    { id: '1a1db3eb8409f45f', threadId: 'thread-f', subject: 'Fixture six', processed: true },
+    { id: '1a1db3eb8409f458', threadId: 'thread-shared', subject: 'Fixture seven', processed: false },
+    { id: '1a1db3eb8409f459', threadId: 'thread-shared', subject: 'Fixture eight', processed: false }
+  ];
+  const run = sheet.fixtureRunSelection(tail, 3);
+  assert.equal(run.idle, false);
+  assert.equal(run.finishes, true);
+  assert.equal(run.processed, 2);
+  assert.equal(run.status, 'ok');
+  assert.deepEqual(run.batch.map((row) => row.item.id), ['1a1db3eb8409f458', '1a1db3eb8409f459']);
+  assert.deepEqual(
+    run.rows.map((row) => [row.subject, row.threadId, row.messageId, row.hasLabel, row.decision, row.reason]),
+    [
+      ['Fixture one', 'thread-a', '1a1db3eb8409f450', true, 'skipped', 'has processed label'],
+      ['Fixture two', 'thread-b', '1a1db3eb8409f451', true, 'skipped', 'has processed label'],
+      ['Fixture three', 'thread-c', '1a1db3eb8409f452', true, 'skipped', 'has processed label'],
+      ['Fixture four', 'thread-d', '1a1db3eb8409f453', true, 'skipped', 'has processed label'],
+      ['Fixture five', 'thread-e', '1a1db3eb8409f454', true, 'skipped', 'has processed label'],
+      ['Fixture six', 'thread-f', '1a1db3eb8409f45f', true, 'skipped', 'has processed label'],
+      ['Fixture seven', 'thread-shared', '1a1db3eb8409f458', false, 'selected', 'unlabeled, within first batch_size'],
+      ['Fixture eight', 'thread-shared', '1a1db3eb8409f459', false, 'selected', 'unlabeled, within first batch_size']
+    ]
+  );
+
+  const cursorId = '1a1db3eb8409f45f';
+  const beforeCursor = tail.filter((item) => !item.processed && item.id < cursorId);
+  assert.deepEqual(beforeCursor.map((item) => item.id), ['1a1db3eb8409f458', '1a1db3eb8409f459']);
+  assert.equal(sheet.planBatch(tail, 3).nextCursor, '');
+  assert.deepEqual(sheet.fixtureRunSelection(tail, 3).batch.map((row) => row.item.id), beforeCursor.map((item) => item.id));
+
+  const sibling = sheet.describeFixtureBatch([
+    { id: 'kept', threadId: 'same', subject: 'Invoice A', processed: true },
+    { id: 'open', threadId: 'same', subject: 'Invoice B', processed: false }
+  ], 3);
+  assert.deepEqual(sibling.selectedIds, ['open']);
+  assert.equal(sibling.rows[0].reason, 'has processed label');
+  assert.equal(sibling.rows[1].reason, 'unlabeled, within first batch_size');
+  assert.equal(sibling.idle, false);
+
+  const deferred = sheet.describeFixtureBatch([
+    { id: 'first', threadId: 'same', subject: 'Invoice A', processed: false },
+    { id: 'second', threadId: 'same', subject: 'Invoice B', processed: false }
+  ], 1);
+  assert.deepEqual(deferred.selectedIds, ['first']);
+  assert.equal(deferred.rows[1].decision, 'skipped');
+  assert.equal(deferred.rows[1].reason, 'unlabeled, after the first batch_size');
+  assert.equal(deferred.rows[1].threadId, 'same');
 });
 
 test('the time budget stops a run before the batch is full', () => {
@@ -86,8 +134,11 @@ test('the dev save logs a batch and does not search the mailbox', () => {
     'utf8'
   );
   assert.match(source, /listTestFixtureMessages\(\{ includeProcessed: true \}\)/);
-  assert.match(source, /planBatch\(listed\.messages, batchSize\)/);
+  assert.match(source, /fixtureRunSelection\(listed\.messages, batchSize\)/);
+  assert.match(source, /if \(selection\.idle\)/);
+  assert.match(source, /subject=%s threadId=%s messageId=%s hasLabel=%s decision=%s reason=%s/);
   assert.equal(source.includes('loadCollectCursor_'), false);
+  assert.equal(source.includes('saveCollectCursor_'), false);
   assert.match(source, /beginRunLog_\(/);
   assert.match(source, /collectRunTotals\(0, \[\]\)/);
   assert.match(clear, /clearCollectCursor_\(\)/);
