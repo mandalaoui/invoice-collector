@@ -1,0 +1,11 @@
+[
+  ["key", "value", "note"],
+  ["month", "2026-01", "override"],
+  ["confidence_threshold", "0,5", "comma decimal"],
+  ["search_queries", "has:attachment invoice\nfrom:vendor@example.com\n", "two queries"],
+  ["allocation_threshold", "", "still empty"],
+  ["vat_rate", 0.18, "already a number"],
+  ["keywords_total", "סה\"כ לתשלום", "one Hebrew line"],
+  ["", "ignored", "blank key"],
+  ["extra_flag", "yes", "not a default"]
+]

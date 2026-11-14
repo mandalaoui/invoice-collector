@@ -2,7 +2,7 @@
 
 ## Phase 0 — Setup
 - [x] 0.1 Create repo structure (`src/`, `tests/fixtures/`, `worker/`), `clasp` project bound to a test Google account. Done when: `clasp push` works. ✅
-- [ ] 0.2 Create the Sheet with tabs `Invoices, RunLog, Comparison, AnswerKey, Settings` + `config.js` that reads Settings. Done when: `getConfig()` returns all keys.
+- [x] 0.2 Create the Sheet with tabs `Invoices, RunLog, Comparison, AnswerKey, Settings` + `config.js` that reads Settings. Done when: `getConfig()` returns all keys. ✅
 - [ ] 0.3 Test data: 5–10 anonymized invoices (PDF text, scanned PDF, image, email body) sent to the test Gmail. Done when: fixtures exist.
 
 ## Phase 1 — Pipeline skeleton (no extraction yet)
