@@ -169,14 +169,48 @@ function amountForKeywords_(lines, keywords, skipKeywords) {
   return amount;
 }
 
-function docToken_(line) {
+function collectIdNumbers_(lines, config) {
+  var ids = [];
+  function add(value) {
+    var digits = String(value || '').replace(/\D/g, '');
+    if (digits.length >= 8 && ids.indexOf(digits) < 0) ids.push(digits);
+  }
+  add(config && config.company_id);
+  var list = lines || [];
+  for (var i = 0; i < list.length; i++) {
+    var found = String(list[i] || '').match(/\d{8,}/g) || [];
+    for (var n = 0; n < found.length; n++) add(found[n]);
+  }
+  return ids;
+}
+
+function idFragment_(token, ids) {
+  if (!/^\d+$/.test(token)) return false;
+  var list = ids || [];
+  for (var i = 0; i < list.length; i++) {
+    if (list[i] === token || list[i].indexOf(token) >= 0) return true;
+  }
+  return false;
+}
+
+function alphanumericDocToken_(line) {
   var withoutDates = stripDates_(line).replace(/[–—−‐‑]/g, '-');
   var coded = /[A-Za-z][A-Za-z0-9]{0,12}(?:\s*-\s*[A-Za-z0-9]+)+/.exec(withoutDates);
   if (coded) return coded[0].replace(/\s+/g, '');
   var reversed = /(\d+)\s*-\s*([A-Za-z][A-Za-z0-9]{0,12})/.exec(withoutDates);
   if (reversed) return reversed[2] + '-' + reversed[1];
-  var numbers = withoutDates.match(/\d{3,8}/g);
-  return numbers && numbers.length ? numbers[0] : null;
+  return null;
+}
+
+function numericDocToken_(line, ids) {
+  var withoutDates = stripDates_(line);
+  var match;
+  var pattern = /(?:^|[^\d])(\d{3,8})(?!\d)/g;
+  while ((match = pattern.exec(withoutDates))) {
+    if (idFragment_(match[1], ids)) continue;
+    return match[1];
+  }
+  return null;
 }
 
 function findDocNumber_(lines, config) {
@@ -187,6 +221,7 @@ function findDocNumber_(lines, config) {
   keywords.push('Quote');
   keywords.push('מספר');
   var skip = config.keywords_allocation || [];
+  var ids = collectIdNumbers_(lines, config);
   var k;
   var i;
   for (k = 0; k < keywords.length; k++) {
@@ -198,12 +233,16 @@ function findDocNumber_(lines, config) {
         if (squashExtract_(skip[s]) !== squashExtract_(keywords[k]) && phraseHits_(lines[i], skip[s])) blocked = true;
       }
       if (blocked) continue;
+      var alphanumeric = null;
+      var numeric = null;
       var delta;
       for (delta = 0; delta <= 6; delta++) {
         if (i + delta >= lines.length) break;
-        var token = docToken_(lines[i + delta]);
-        if (token) return token;
+        if (!alphanumeric) alphanumeric = alphanumericDocToken_(lines[i + delta]);
+        if (!numeric) numeric = numericDocToken_(lines[i + delta], ids);
       }
+      if (alphanumeric) return alphanumeric;
+      if (numeric) return numeric;
     }
   }
   return null;

@@ -137,6 +137,22 @@ test('a quote number of letters, digits, and a dash is kept', () => {
   assert.equal(sameLine.doc_number, 'Q-17');
   const quote = extract.extractInvoice('Quote Q-17\nTotal due: 100', settings, {});
   assert.equal(quote.doc_number, 'Q-17');
+
+  const besideIds = extract.extractInvoice(
+    [
+      'הצעת מחיר',
+      'ציוד דמה בע"מ',
+      'ח.פ 990100067',
+      'לכבוד',
+      'סטודיו דמה לבדיקות בע"מ',
+      'ח.פ 990100091',
+      'Q-17'
+    ].join('\n'),
+    settings,
+    {}
+  );
+  assert.equal(besideIds.doc_number, 'Q-17');
+  assert.notEqual(besideIds.doc_number, '99010009');
 });
 
 test('Hebrew quotes and מס׳ normalize before matching', () => {

@@ -526,11 +526,6 @@ function readDocumentText(input) {
   return { text: '', source: 'empty' };
 }
 
-function googleDocsMime_() {
-  if (typeof MimeType !== 'undefined' && MimeType.GOOGLE_DOCS) return MimeType.GOOGLE_DOCS;
-  return 'application/vnd.google-apps.document';
-}
-
 function ocrInsertFailed_(resource, options, error) {
   var detail = 'drive.files.insert resource=' + JSON.stringify(resource) +
     ' options=' + JSON.stringify(options) +
@@ -540,9 +535,9 @@ function ocrInsertFailed_(resource, options, error) {
 }
 
 /**
- * Drive v2: resource {title, mimeType: MimeType.GOOGLE_DOCS}, image/PDF blob,
- * optional args {ocr: true, ocrLanguage: 'iw'}. A rejected language is retried
- * with ocr only. The temp Doc is read and trashed.
+ * Drive v2 OCR: resource mimeType is the source file (image/jpeg or application/pdf).
+ * Optional args are {ocr: true, ocrLanguage: 'iw'}. Drive creates the Doc.
+ * A rejected language is retried with ocr only. The temp Doc is read and trashed.
  */
 function driveOcrText_(blob, mime, name) {
   var uploadType = mimeBase_(mime);
@@ -553,7 +548,8 @@ function driveOcrText_(blob, mime, name) {
     throw new Error('Enable the Drive advanced service (Drive API v2). It is required for OCR.');
   }
   var media = blob && blob.setContentType ? blob.setContentType(uploadType) : blob;
-  var resource = { title: TEMP_OCR_TITLE, mimeType: googleDocsMime_() };
+  var sourceType = media && media.getContentType ? String(media.getContentType()) : uploadType;
+  var resource = { title: TEMP_OCR_TITLE, mimeType: sourceType };
   var withLanguage = { ocr: true, ocrLanguage: 'iw' };
   var created = null;
   try {

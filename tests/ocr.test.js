@@ -119,10 +119,9 @@ function jpegBlob() {
   };
 }
 
-test('a JPEG is OCR’d with Docs mime type and Hebrew iw, then the temp Doc is deleted', () => {
+test('a JPEG is OCR’d as image/jpeg with Hebrew iw, then the temp Doc is deleted', () => {
   const inserts = [];
   let trashed = '';
-  global.MimeType = { GOOGLE_DOCS: 'application/vnd.google-apps.document' };
   global.Drive = {
     Files: {
       insert(resource, media, options) {
@@ -150,14 +149,13 @@ test('a JPEG is OCR’d with Docs mime type and Hebrew iw, then the temp Doc is 
     });
     assert.equal(inserts.length, 1);
     assert.equal(inserts[0].resource.title, 'invoice-collector-text');
-    assert.equal(inserts[0].resource.mimeType, MimeType.GOOGLE_DOCS);
+    assert.equal(inserts[0].resource.mimeType, 'image/jpeg');
     assert.deepEqual(inserts[0].options, { ocr: true, ocrLanguage: 'iw' });
     assert.equal(inserts[0].media.contentType, 'image/jpeg');
     assert.equal(read.source, 'ocr');
     assert.match(read.text, /3188/);
     assert.equal(trashed, 'temp-doc');
   } finally {
-    delete global.MimeType;
     delete global.Drive;
     delete global.DocumentApp;
     delete global.DriveApp;
@@ -167,7 +165,6 @@ test('a JPEG is OCR’d with Docs mime type and Hebrew iw, then the temp Doc is 
 test('a rejected OCR language is retried without ocrLanguage and the request is logged', () => {
   const inserts = [];
   const logs = [];
-  global.MimeType = { GOOGLE_DOCS: 'application/vnd.google-apps.document' };
   global.Logger = { log(message) { logs.push(message); } };
   global.Drive = {
     Files: {
@@ -197,12 +194,11 @@ test('a rejected OCR language is retried without ocrLanguage and the request is 
     assert.equal(read.source, 'ocr');
     assert.deepEqual(inserts[0].options, { ocr: true, ocrLanguage: 'iw' });
     assert.deepEqual(inserts[1].options, { ocr: true });
-    assert.equal(inserts[1].resource.mimeType, 'application/vnd.google-apps.document');
+    assert.equal(inserts[1].resource.mimeType, 'image/jpeg');
     assert.match(logs[0], /ocrLanguage/);
     assert.match(logs[0], /Invalid Value/);
     assert.match(logs[0], /image\/jpeg|application\/vnd.google-apps.document/);
   } finally {
-    delete global.MimeType;
     delete global.Logger;
     delete global.Drive;
     delete global.DocumentApp;
