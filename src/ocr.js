@@ -463,25 +463,62 @@ function extractPdfTextLayer(bytes) {
  * @param {{name?: string, mime?: string, bytes?: Array<number>, html?: string, ocr?: function(Object): string}} input
  * @return {{text: string, source: string}}
  */
+var TEMP_OCR_TITLE = 'invoice-collector-text';
+
+function mimeBase_(mime) {
+  return String(mime || '').toLowerCase().split(';')[0].trim();
+}
+
+/** Temp OCR docs are not invoices. */
+function isTempOcrFile(name) {
+  return String(name || '').indexOf(TEMP_OCR_TITLE) === 0;
+}
+
+/**
+ * pdf and image may be OCR'd. A Google Doc is read as a Doc.
+ * HTML is read as HTML. A temp OCR doc is skipped.
+ * @return {string}
+ */
+function textSourceForMime(mime, name) {
+  if (isTempOcrFile(name)) return 'skip';
+  var type = mimeBase_(mime);
+  var lower = String(name || '').toLowerCase();
+  if (type === 'application/vnd.google-apps.document') return 'google-doc';
+  if (type.indexOf('text/html') === 0 || lower.endsWith('.html') || lower.endsWith('.htm')) return 'html';
+  if (type === 'application/pdf' || lower.endsWith('.pdf')) return 'pdf';
+  if (type.indexOf('image/') === 0 || /\.(jpe?g|png)$/.test(lower)) return 'image';
+  return 'unsupported';
+}
+
+/** Drive OCR accepts only PDF and image bytes. */
+function allowsOcr(mime, name) {
+  var kind = textSourceForMime(mime, name);
+  return kind === 'pdf' || kind === 'image';
+}
+
 function readDocumentText(input) {
   var source = input || {};
   var name = String(source.name || '');
-  var mime = String(source.mime || '').toLowerCase();
-  var lower = name.toLowerCase();
-  if (source.html != null || lower.endsWith('.html') || lower.endsWith('.htm') || mime.indexOf('html') >= 0) {
+  var mime = String(source.mime || '');
+  var kind = textSourceForMime(mime, name);
+  if (kind === 'skip') return { text: '', source: 'skip' };
+  if (kind === 'google-doc') {
+    return { text: String(source.text || ''), source: 'google-doc' };
+  }
+  if (kind === 'html' || source.html != null) {
     var html = source.html != null ? source.html : bytesToUtf8_(source.bytes);
     return { text: htmlToText(html), source: 'html' };
   }
-  if (lower.endsWith('.pdf') || mime.indexOf('pdf') >= 0) {
+  if (kind === 'pdf') {
     var layer = extractPdfTextLayer(source.bytes);
     if (textLayerIsUsable(layer)) return { text: layer, source: 'text-layer' };
-    if (typeof source.ocr === 'function') {
+    if (allowsOcr(mime, name) && typeof source.ocr === 'function') {
       return { text: String(source.ocr(source) || ''), source: 'ocr' };
     }
     return { text: layer || '', source: 'empty' };
   }
-  if (mime.indexOf('image/') === 0 || /\.(jpe?g|png)$/.test(lower)) {
-    if (typeof source.ocr === 'function') {
+  if (kind === 'image') {
+    if (allowsOcr(mime, name) && typeof source.ocr === 'function') {
       return { text: String(source.ocr(source) || ''), source: 'ocr' };
     }
     return { text: '', source: 'empty' };
@@ -489,14 +526,19 @@ function readDocumentText(input) {
   return { text: '', source: 'empty' };
 }
 
-function driveConvertText_(blob, useOcr) {
+function driveConvertText_(blob, useOcr, mime, name) {
+  var blobType = mimeBase_(blob.getContentType ? blob.getContentType() : mime);
+  if (useOcr && !allowsOcr(blobType || mime, name)) {
+    throw new Error('OCR is only supported for PDF and image files, not ' + (blobType || mime || 'unknown'));
+  }
   if (typeof Drive === 'undefined' || !Drive.Files || typeof Drive.Files.insert !== 'function') {
     throw new Error('Enable the Drive advanced service (Drive API v2). It is required for OCR.');
   }
   var created = Drive.Files.insert(
     {
-      title: 'invoice-collector-text',
-      mimeType: 'application/vnd.google-apps.document'
+      title: TEMP_OCR_TITLE,
+      mimeType: 'application/vnd.google-apps.document',
+      parents: [{ id: DriveApp.getRootFolder().getId() }]
     },
     blob,
     useOcr ? { convert: true, ocr: true, ocrLanguage: 'he' } : { convert: true }
@@ -509,22 +551,75 @@ function driveConvertText_(blob, useOcr) {
 }
 
 /**
- * Apps Script entry. Text layer first, then Drive conversion, then Hebrew OCR.
- * @return {{text: string, source: string}}
+ * Trash leftover OCR docs so they are not treated as invoices.
+ * @return {number}
  */
+function trashTempOcrFiles(folder) {
+  var removed = 0;
+  var files = folder.getFiles();
+  while (files.hasNext()) {
+    var file = files.next();
+    if (!isTempOcrFile(file.getName())) continue;
+    file.setTrashed(true);
+    removed++;
+  }
+  return removed;
+}
+
+/**
+ * Apps Script entry. PDF text layer first. OCR only for PDF and images.
+ * Google Docs are read with DocumentApp. HTML is read as HTML.
+ * @return {{text: string, source: string, name: string, mimeType: string}}
+ */
+function readDriveFileText(file) {
+  var fileName = file.getName();
+  var mime = file.getMimeType();
+  var kind = textSourceForMime(mime, fileName);
+  if (kind === 'skip') return { text: '', source: 'skip', name: fileName, mimeType: mime };
+  if (kind === 'google-doc') {
+    return {
+      text: DocumentApp.openById(file.getId()).getBody().getText(),
+      source: 'google-doc',
+      name: fileName,
+      mimeType: mime
+    };
+  }
+  var blob = file.getBlob();
+  if (kind === 'html') {
+    return { text: htmlToText(blob.getDataAsString()), source: 'html', name: fileName, mimeType: mime };
+  }
+  var read = readDocumentText({ name: fileName, mime: mime, bytes: blob.getBytes() });
+  read.name = fileName;
+  read.mimeType = mime;
+  if (read.source === 'text-layer' || read.source === 'html') return read;
+  if (!allowsOcr(mime, fileName)) {
+    throw new Error('OCR is only supported for PDF and image files, not ' + mime);
+  }
+  if (kind === 'pdf') {
+    var converted = driveConvertText_(blob, false, mime, fileName);
+    if (textLayerIsUsable(converted)) {
+      return { text: converted, source: 'text-layer', name: fileName, mimeType: mime };
+    }
+  }
+  return { text: driveConvertText_(blob, true, mime, fileName), source: 'ocr', name: fileName, mimeType: mime };
+}
+
+/** @deprecated Use readDriveFileText so the file mime type is known. */
 function readDriveBlobText(blob, name) {
   var fileName = String(name || (blob.getName && blob.getName()) || '');
   var mime = String((blob.getContentType && blob.getContentType()) || '');
-  var bytes = blob.getBytes();
-  var read = readDocumentText({ name: fileName, mime: mime, bytes: bytes });
-  if (read.source === 'html') return read;
-  if (read.source === 'text-layer') return read;
-  var image = mime.indexOf('image/') === 0 || /\.(jpe?g|png)$/i.test(fileName);
-  if (!image) {
-    var converted = driveConvertText_(blob, false);
+  var read = readDocumentText({ name: fileName, mime: mime, bytes: blob.getBytes() });
+  if (read.source === 'html' || read.source === 'text-layer' || read.source === 'google-doc' || read.source === 'skip') {
+    return read;
+  }
+  if (!allowsOcr(mime, fileName)) {
+    throw new Error('OCR is only supported for PDF and image files, not ' + (mime || 'unknown'));
+  }
+  if (textSourceForMime(mime, fileName) === 'pdf') {
+    var converted = driveConvertText_(blob, false, mime, fileName);
     if (textLayerIsUsable(converted)) return { text: converted, source: 'text-layer' };
   }
-  return { text: driveConvertText_(blob, true), source: 'ocr' };
+  return { text: driveConvertText_(blob, true, mime, fileName), source: 'ocr' };
 }
 
 if (typeof module !== 'undefined') {
@@ -532,6 +627,9 @@ if (typeof module !== 'undefined') {
     htmlToText: htmlToText,
     textLayerIsUsable: textLayerIsUsable,
     extractPdfTextLayer: extractPdfTextLayer,
-    readDocumentText: readDocumentText
+    readDocumentText: readDocumentText,
+    textSourceForMime: textSourceForMime,
+    allowsOcr: allowsOcr,
+    isTempOcrFile: isTempOcrFile
   };
 }

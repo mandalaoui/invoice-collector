@@ -63,6 +63,46 @@ test('a scanned PDF and a photo have no text layer and use OCR', () => {
   assert.match(scannedOcr.text, /186/);
 });
 
+test('OCR is only offered for PDFs and images', () => {
+  assert.equal(ocr.allowsOcr('application/pdf', 'invoice.pdf'), true);
+  assert.equal(ocr.allowsOcr('image/jpeg', 'receipt.jpg'), true);
+  assert.equal(ocr.allowsOcr('image/png', 'receipt.png'), true);
+  assert.equal(ocr.textSourceForMime('application/vnd.google-apps.document', 'Converted'), 'google-doc');
+  assert.equal(ocr.allowsOcr('application/vnd.google-apps.document', 'Converted'), false);
+  assert.equal(ocr.textSourceForMime('text/html', '06-email-body-invoice.html'), 'html');
+  assert.equal(ocr.allowsOcr('text/html', '06-email-body-invoice.html'), false);
+  assert.equal(ocr.isTempOcrFile('invoice-collector-text'), true);
+  assert.equal(ocr.textSourceForMime('application/vnd.google-apps.document', 'invoice-collector-text'), 'skip');
+  assert.equal(ocr.allowsOcr('application/pdf', 'invoice-collector-text'), false);
+
+  let called = false;
+  const doc = ocr.readDocumentText({
+    name: 'Converted',
+    mime: 'application/vnd.google-apps.document',
+    text: 'חשבונית מס 7712',
+    ocr: function () {
+      called = true;
+      return 'should not run';
+    }
+  });
+  assert.equal(called, false);
+  assert.equal(doc.source, 'google-doc');
+  assert.match(doc.text, /7712/);
+
+  const html = ocr.readDocumentText({
+    name: '06-email-body-invoice.html',
+    mime: 'text/html',
+    html: '<p>סה"כ לתשלום: 1,770.00</p>',
+    ocr: function () {
+      called = true;
+      return 'should not run';
+    }
+  });
+  assert.equal(called, false);
+  assert.equal(html.source, 'html');
+  assert.match(html.text, /1,770/);
+});
+
 test('a usable text layer is not sent to OCR', () => {
   let called = false;
   const read = ocr.readDocumentText({

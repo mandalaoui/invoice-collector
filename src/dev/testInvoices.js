@@ -41,6 +41,99 @@ function withFixtureCompany_(run) {
   }
 }
 
+function fixtureStem_(fileName) {
+  return String(fileName || '').replace(/\.[^.]+$/, '');
+}
+
+function formatFixtureDriveFile_(row) {
+  return row.fixture + '\t' + row.name + '\t' + row.mimeType;
+}
+
+/**
+ * Pair each fixture with a Drive file. Temp OCR docs are left out.
+ * @param {Array<{file: string}>} fixtures
+ * @param {Array<{name: string, mimeType: string}>} driveFiles
+ * @return {Array<{fixture: string, name: string, mimeType: string}>}
+ */
+function driveFileRank_(mime) {
+  var type = String(mime || '').toLowerCase();
+  if (type === 'application/pdf' || type.indexOf('image/') === 0) return 3;
+  if (type.indexOf('text/html') === 0) return 2;
+  if (type === 'application/vnd.google-apps.document') return 1;
+  return 0;
+}
+
+function mapFixturesToDriveFiles(fixtures, driveFiles) {
+  var pending = {};
+  var list = fixtures || [];
+  var i;
+  for (i = 0; i < list.length; i++) pending[fixtureStem_(list[i].file)] = list[i].file;
+  var best = {};
+  var files = driveFiles || [];
+  for (i = 0; i < files.length; i++) {
+    var drive = files[i] || {};
+    if (isTempOcrFile(drive.name)) continue;
+    var keys = Object.keys(pending);
+    var stem = '';
+    var k;
+    for (k = 0; k < keys.length; k++) {
+      if (String(drive.name || '').indexOf(keys[k]) >= 0) stem = keys[k];
+    }
+    if (!stem) continue;
+    var candidate = { fixture: pending[stem], name: drive.name, mimeType: drive.mimeType || '' };
+    if (!best[stem] || driveFileRank_(candidate.mimeType) > driveFileRank_(best[stem].mimeType)) {
+      best[stem] = candidate;
+    }
+  }
+  var maps = [];
+  for (i = 0; i < list.length; i++) {
+    var chosen = best[fixtureStem_(list[i].file)];
+    if (chosen) maps.push(chosen);
+  }
+  return maps;
+}
+
+function readFailureFields(error) {
+  var reason = String(error && error.message ? error.message : error);
+  return {
+    vendor_name: '',
+    vendor_id: '',
+    doc_type: '',
+    doc_number: '',
+    doc_date: '',
+    amount_before_vat: '',
+    vat_amount: '',
+    total: '',
+    currency: '',
+    allocation_number: '',
+    buyer_name_ok: '',
+    confidence: 0,
+    status: 'REVIEW',
+    reasons: [reason]
+  };
+}
+
+/**
+ * One thrown read does not drop the other files.
+ * @param {Array<Object>} files
+ * @param {function(Object): Object} readOne
+ * @return {Array<Object>}
+ */
+function readFixtureFiles(files, readOne) {
+  var rows = [];
+  var list = files || [];
+  for (var i = 0; i < list.length; i++) {
+    try {
+      rows.push(readOne(list[i]));
+    } catch (error) {
+      var failed = readFailureFields(error);
+      failed.file = list[i] && (list[i].fixture || list[i].name) ? list[i].fixture || list[i].name : '';
+      rows.push(failed);
+    }
+  }
+  return rows;
+}
+
 function buildFixtureInvoiceRows() {
   var listed = listTestFixtureMessages({ includeProcessed: true });
   if (listed.count !== 8) throw new Error('found ' + listed.count + ' fixture messages');
@@ -48,48 +141,90 @@ function buildFixtureInvoiceRows() {
   var i;
   for (i = 0; i < listed.messages.length; i++) bySubject[listed.messages[i].subject] = listed.messages[i];
   var folder = DriveApp.getFolderById(getConfig().invoices_folder_id);
+  var removed = trashTempOcrFiles(folder);
+  if (removed) Logger.log('trashed %s temp OCR doc(s) from the month folder', removed);
   var docs = FIXTURE_EXPECTED.documents;
-  var pending = {};
-  for (i = 0; i < docs.length; i++) pending[docs[i].file.replace(/\.[^.]+$/, '')] = docs[i];
-  var rows = [];
-  var files = folder.getFiles();
-  while (files.hasNext()) {
-    var file = files.next();
-    var stem = '';
-    var keys = Object.keys(pending);
-    for (i = 0; i < keys.length; i++) {
-      if (file.getName().indexOf(keys[i]) >= 0) stem = keys[i];
+  var driveFiles = [];
+  var fileByName = {};
+  var found = folder.getFiles();
+  while (found.hasNext()) {
+    var file = found.next();
+    if (isTempOcrFile(file.getName())) {
+      file.setTrashed(true);
+      continue;
     }
-    if (!stem) continue;
-    var doc = pending[stem];
-    var message = bySubject[TEST_FIXTURE_MESSAGES.filter(function (item) {
-      return item.file.replace(/\.[^.]+$/, '') === stem;
-    })[0].subject];
-    if (!message) throw new Error('no message for ' + doc.file);
-    var read = readDriveBlobText(file.getBlob(), file.getName());
-    var fields = extractInvoice(read.text, getConfig(), { senderEmail: doc.from, senderName: doc.name });
-    var existing = rows.map(function (row) {
-      return { vendor_id: row.vendor_id, doc_number: row.doc_number };
-    });
-    var decision = classifyInvoice(fields, getConfig(), existing);
-    fields.source = message.id + ' ' + stem;
-    fields.file_link = file.getUrl();
-    fields.status = decision.status;
-    rows.push(fields);
-    delete pending[stem];
+    driveFiles.push({ name: file.getName(), mimeType: file.getMimeType() });
+    fileByName[file.getName()] = file;
   }
-  var missing = Object.keys(pending);
-  if (missing.length) throw new Error('missing files ' + missing.join(', '));
-  return rows;
+  var maps = mapFixturesToDriveFiles(docs, driveFiles);
+  var jobs = [];
+  for (i = 0; i < docs.length; i++) {
+    var doc = docs[i];
+    var docStem = fixtureStem_(doc.file);
+    var matched = null;
+    var m;
+    for (m = 0; m < maps.length; m++) {
+      if (maps[m].fixture === doc.file) matched = maps[m];
+    }
+    jobs.push({
+      fixture: doc.file,
+      doc: doc,
+      stem: docStem,
+      name: matched ? matched.name : '',
+      mimeType: matched ? matched.mimeType : '',
+      file: matched ? fileByName[matched.name] || null : null
+    });
+  }
+  var rows = readFixtureFiles(jobs, function (job) {
+    if (!job.file) throw new Error('no Drive file for ' + job.fixture);
+    var fixtureMessage = null;
+    for (var n = 0; n < TEST_FIXTURE_MESSAGES.length; n++) {
+      if (fixtureStem_(TEST_FIXTURE_MESSAGES[n].file) === job.stem) fixtureMessage = TEST_FIXTURE_MESSAGES[n];
+    }
+    var message = fixtureMessage ? bySubject[fixtureMessage.subject] : null;
+    if (!message) throw new Error('no message for ' + job.fixture);
+    var read = readDriveFileText(job.file);
+    var fields = extractInvoice(read.text, getConfig(), { senderEmail: job.doc.from, senderName: job.doc.name });
+    var existing = [];
+    var decision = classifyInvoice(fields, getConfig(), existing);
+    fields.source = message.id + ' ' + job.stem;
+    fields.file_link = job.file.getUrl();
+    fields.status = decision.status;
+    fields.reasons = decision.reasons;
+    return fields;
+  });
+  for (i = 0; i < rows.length; i++) {
+    if (rows[i].status !== 'REVIEW' || rows[i].source) continue;
+    var job = jobs[i];
+    var fixtureMessage = null;
+    var n;
+    for (n = 0; n < TEST_FIXTURE_MESSAGES.length; n++) {
+      if (fixtureStem_(TEST_FIXTURE_MESSAGES[n].file) === job.stem) fixtureMessage = TEST_FIXTURE_MESSAGES[n];
+    }
+    var message = fixtureMessage ? bySubject[fixtureMessage.subject] : null;
+    rows[i].source = (message ? message.id : 'missing') + ' ' + job.stem;
+    rows[i].file_link = job.file ? job.file.getUrl() : '';
+    Logger.log('REVIEW %s %s', job.fixture, rows[i].reasons.join(' | '));
+  }
+  var prior = [];
+  for (i = 0; i < rows.length; i++) {
+    if (rows[i].status === 'REVIEW' && rows[i].reasons && rows[i].reasons.length && !rows[i].doc_number) continue;
+    var decision = classifyInvoice(rows[i], getConfig(), prior);
+    if (decision.status === 'DUPLICATE') rows[i].status = 'DUPLICATE';
+    if (rows[i].vendor_id && rows[i].doc_number) prior.push(rows[i]);
+  }
+  return { rows: rows, maps: maps };
 }
 
 function testInvoices() {
   var detail = '';
   var pass = false;
   var added = [];
+  var maps = [];
   try {
     var result = withFixtureCompany_(function () {
-      var rows = buildFixtureInvoiceRows();
+      var built = buildFixtureInvoiceRows();
+      var rows = built.rows;
       var first = appendInvoiceRows(rows);
       var second = appendInvoiceRows(rows);
       beginRunLog_({
@@ -103,9 +238,10 @@ function testInvoices() {
         status: 'ok',
         cursor: ''
       });
-      return { first: first, second: second, rows: rows };
+      return { first: first, second: second, rows: rows, maps: built.maps };
     });
     added = [result.first.added, result.second.added];
+    maps = result.maps || [];
     var stored = readInvoiceRows();
     var found = 0;
     for (var i = 0; i < FIXTURE_EXPECTED.documents.length; i++) {
@@ -124,7 +260,7 @@ function testInvoices() {
     detail = String(error && error.message ? error.message : error);
   }
   Logger.log('testInvoices %s %s', pass ? 'PASS' : 'FAIL', detail);
-  return { result: pass ? 'PASS' : 'FAIL', detail: detail, added: added };
+  return { result: pass ? 'PASS' : 'FAIL', detail: detail, added: added, maps: maps };
 }
 
 function phase2Passes_(correct, total, missStatuses) {
@@ -189,6 +325,10 @@ function testPhase2() {
   var pass = false;
   var detail = invoices.detail;
   try {
+    var maps = invoices.maps || [];
+    Logger.log('fixture\tname\tmimeType');
+    var m;
+    for (m = 0; m < maps.length; m++) Logger.log(formatFixtureDriveFile_(maps[m]));
     score = scoreFixtureInvoices_();
     Logger.log('file\tfield\texpected\tactual\tstatus');
     for (var i = 0; i < score.lines.length; i++) Logger.log(score.lines[i]);
@@ -210,5 +350,14 @@ function testPhase2() {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { phase2Passes_: phase2Passes_ };
+  if (typeof isTempOcrFile !== 'function') {
+    global.isTempOcrFile = require('../ocr.js').isTempOcrFile;
+  }
+  module.exports = {
+    phase2Passes_: phase2Passes_,
+    mapFixturesToDriveFiles: mapFixturesToDriveFiles,
+    formatFixtureDriveFile_: formatFixtureDriveFile_,
+    readFixtureFiles: readFixtureFiles,
+    readFailureFields: readFailureFields
+  };
 }

@@ -25,8 +25,12 @@ function testOcr() {
       for (i = 0; i < keys.length; i++) {
         if (file.getName().indexOf(keys[i]) >= 0) stem = keys[i];
       }
+      if (isTempOcrFile(file.getName())) {
+        file.setTrashed(true);
+        continue;
+      }
       if (!stem) continue;
-      var read = readDriveBlobText(file.getBlob(), file.getName());
+      var read = readDriveFileText(file);
       var chars = String(read.text || '').replace(/\s/g, '').length;
       Logger.log('testOcr %s source=%s chars=%s', pending[stem], read.source, chars);
       rows.push(pending[stem] + ' ' + read.source + ' ' + chars);

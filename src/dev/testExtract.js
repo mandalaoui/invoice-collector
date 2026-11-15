@@ -65,9 +65,13 @@ function testExtract() {
       for (i = 0; i < keys.length; i++) {
         if (file.getName().indexOf(keys[i]) >= 0) stem = keys[i];
       }
+      if (isTempOcrFile(file.getName())) {
+        file.setTrashed(true);
+        continue;
+      }
       if (!stem) continue;
       var doc = pending[stem];
-      var read = readDriveBlobText(file.getBlob(), file.getName());
+      var read = readDriveFileText(file);
       var fields = extractInvoice(read.text, getConfig(), { senderEmail: doc.from, senderName: doc.name });
       var misses = extractFieldMisses_(fields, doc.fields);
       Logger.log(
