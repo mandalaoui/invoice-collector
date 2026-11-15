@@ -24,7 +24,7 @@
 
 ## Phase 4 — Output
 - [x] 4.1 Monthly summary + merged PDF (copies only). ✅
-- [ ] 4.2 Gmail draft to accountant (never send).
+- [x] 4.2 Gmail draft to accountant (never send). ✅
 - [ ] 4.3 Monthly time trigger + error email to owner only.
 
 ## Phase 5 — Local AI mode (optional)
