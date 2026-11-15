@@ -200,6 +200,121 @@ function testPhase4() {
   return { result: pass ? 'PASS' : 'FAIL', detail: detail };
 }
 
+/**
+ * PASS when the menu functions exist, a second install adds nothing,
+ * and the test-run draft is to the current user with no mail sent.
+ */
+function testPhase6() {
+  var saved = {
+    accountant_email: readSettingValue_('accountant_email'),
+    owner_email: readSettingValue_('owner_email'),
+    month: readSettingValue_('month')
+  };
+  var detail = '';
+  var pass = false;
+  try {
+    var me = activeTestEmail_();
+    if (!me) throw new Error('no user email for the draft');
+    Logger.log('testPhase6 step 1: menu functions');
+    var items = collectorMenuItems();
+    var expected = ['install', 'runThisMonth', 'testRun', 'turnMonthlyTriggerOn', 'turnMonthlyTriggerOff'];
+    for (var i = 0; i < expected.length; i++) {
+      if (!items[i] || items[i].fn !== expected[i]) throw new Error('menu slot ' + i + ' is wrong');
+      if (typeof menuFunction_(expected[i]) !== 'function') throw new Error(expected[i] + ' is missing');
+    }
+    if (typeof onOpen !== 'function') throw new Error('onOpen is missing');
+
+    if (!isInstallEmail_(saved.owner_email && saved.owner_email.value)) writeInstallEmail_('owner_email', me);
+    if (!isInstallEmail_(saved.accountant_email && saved.accountant_email.value)) {
+      writeInstallEmail_('accountant_email', me);
+    }
+
+    Logger.log('testPhase6 step 2: install twice');
+    var foldersBefore = invoicesRootCount_();
+    var first = install();
+    var second = install();
+    if (second.prompted.length) throw new Error('second install asked for ' + second.prompted.join(', '));
+    if (invoicesRootCount_() !== Math.max(foldersBefore, 1)) throw new Error('Invoices folder count changed');
+    if (second.folder.created) throw new Error('second install created a folder');
+    for (var n = 0; n < second.labels.length; n++) {
+      if (second.labels[n].created) throw new Error('second install created ' + second.labels[n].name);
+    }
+    if (second.trigger.action !== 'kept') throw new Error('second install added a menu trigger');
+    if (!first.url || first.url !== second.url) throw new Error('install url changed');
+
+    var month = FIXTURE_EXPECTED.month;
+    writeSettingValue_('month', month);
+    Logger.log('testPhase6 step 3: test run draft to %s', me);
+    var sentPack = sentCount_('Invoices ' + month);
+    var sentError = sentCount_('Invoice Collector failed ' + month);
+    var folder = DriveApp.getFolderById(getConfig().invoices_folder_id);
+    var officialName = month + '_merged.pdf';
+    var officialBefore = fileStamp_(folder, officialName);
+    var accountantBefore = String(getConfig().accountant_email || '');
+    var result = testRun();
+    if (result.documents > 3) throw new Error('test run used ' + result.documents + ' documents');
+    if (result.pdfName !== testRunPdfName(month)) throw new Error('test pdf is ' + result.pdfName);
+    if (String(result.draftTo || '').toLowerCase().indexOf(me.toLowerCase()) < 0) {
+      throw new Error('draft went to ' + result.draftTo);
+    }
+    if (String(getConfig().accountant_email || '') !== accountantBefore) {
+      throw new Error('accountant_email was not restored');
+    }
+    var message = GmailApp.getDraft(result.draftId).getMessage();
+    if (String(message.getTo() || '').toLowerCase().indexOf(me.toLowerCase()) < 0) {
+      throw new Error('draft To is ' + message.getTo());
+    }
+    if (sentCount_('Invoices ' + month) !== sentPack) throw new Error('a pack mail was sent');
+    if (sentCount_('Invoice Collector failed ' + month) !== sentError) throw new Error('an error mail was sent');
+    var officialAfter = fileStamp_(folder, officialName);
+    if (officialBefore.id !== officialAfter.id || officialBefore.size !== officialAfter.size) {
+      throw new Error('monthly pdf changed');
+    }
+    if (getConfig().accountant_email !== (saved.accountant_email ? saved.accountant_email.value : me)) {
+      throw new Error('accountant_email was left on the test user');
+    }
+
+    pass = true;
+    detail = 'install=kept documents=' + result.documents + ' draft=' + result.draftAction + ' to=' + me;
+  } catch (error) {
+    pass = false;
+    detail = String(error && error.message ? error.message : error);
+  } finally {
+    if (saved.accountant_email) writeSettingValue_('accountant_email', saved.accountant_email.value);
+    if (saved.owner_email) writeSettingValue_('owner_email', saved.owner_email.value);
+    if (saved.month) writeSettingValue_('month', saved.month.value);
+    Logger.log('testPhase6 restored accountant_email, owner_email, and month');
+  }
+  Logger.log('testPhase6 %s %s', pass ? 'PASS' : 'FAIL', detail);
+  return { result: pass ? 'PASS' : 'FAIL', detail: detail };
+}
+
+function menuFunction_(name) {
+  if (name === 'install') return install;
+  if (name === 'runThisMonth') return runThisMonth;
+  if (name === 'testRun') return testRun;
+  if (name === 'turnMonthlyTriggerOn') return turnMonthlyTriggerOn;
+  if (name === 'turnMonthlyTriggerOff') return turnMonthlyTriggerOff;
+  return null;
+}
+
+function invoicesRootCount_() {
+  var count = 0;
+  var found = DriveApp.getRootFolder().getFoldersByName(INSTALL_FOLDER_NAME);
+  while (found.hasNext()) {
+    found.next();
+    count++;
+  }
+  return count;
+}
+
+function fileStamp_(folder, name) {
+  var found = folder.getFilesByName(name);
+  if (!found.hasNext()) return { id: '', size: 0 };
+  var file = found.next();
+  return { id: file.getId(), size: file.getSize() };
+}
+
 function testAllSoFar() {
   var rows = [
     runTaskCheck_('0.2', checkConfigKeys_),
@@ -212,7 +327,8 @@ function testAllSoFar() {
     testValidationResult_(),
     testPhase2Result_(),
     testAccuracyResult_(),
-    testPhase4Result_()
+    testPhase4Result_(),
+    testPhase6Result_()
   ];
   var summary = summarizeTaskResults_(rows);
   Logger.log('task\tresult\tdetail');
@@ -263,6 +379,12 @@ function testPhase4Result_() {
   Logger.log('testAllSoFar step 4: testPhase4');
   var phase = testPhase4();
   return { task: '4', result: phase.result, detail: phase.detail };
+}
+
+function testPhase6Result_() {
+  Logger.log('testAllSoFar step 6: testPhase6');
+  var phase = testPhase6();
+  return { task: '6', result: phase.result, detail: phase.detail };
 }
 
 function runTaskCheck_(task, check) {

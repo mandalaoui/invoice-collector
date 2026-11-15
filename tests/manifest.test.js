@@ -30,6 +30,17 @@ test('manifest can open Docs and still use Drive', () => {
   assert.equal(drive.version, 'v2');
 });
 
+test('production clasp push excludes src/dev', () => {
+  const ignore = fs.readFileSync(path.join(root, '.claspignore'), 'utf8');
+  assert.match(ignore, /^dev\/\*\*$/m);
+  assert.match(ignore, /^src\/dev\/\*\*$/m);
+  const scripts = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).scripts;
+  assert.equal(scripts.push, 'clasp push');
+  assert.equal(scripts['push:dev'].includes('.claspignore.dev'), true);
+  const devIgnore = fs.readFileSync(path.join(root, '.claspignore.dev'), 'utf8');
+  assert.equal(/^dev\/\*\*$/m.test(devIgnore), false);
+});
+
 test('task 0.1 directories exist', () => {
   for (const dir of ['src', 'tests/fixtures', 'worker']) {
     assert.equal(fs.statSync(path.join(root, dir)).isDirectory(), true);

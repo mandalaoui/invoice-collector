@@ -36,4 +36,4 @@
 - [x] 6.1 `install()`: sheet tabs, Settings defaults, Gmail labels, Drive folder. Idempotent. Asks only for owner and accountant emails. ✅
 - [x] 6.2 Sheet menu: Install / Run this month / Test run (draft to me) / trigger on / off. Test run is a limited batch and never sends. ✅
 - [x] 6.3 `docs/INSTALL.md` for a Workspace user, including admin checks and the Advanced Drive service. ✅
-- [ ] 6.4 Production `clasp push` excludes `src/dev`. `testPhase6` covers the menu, a second install, and a self-addressed draft.
+- [x] 6.4 Production `clasp push` excludes `src/dev`. `testPhase6` covers the menu, a second install, and a self-addressed draft. ✅
