@@ -57,10 +57,11 @@ function testAccuracy() {
     }
     var parts = [];
     for (var i = 1; i < values.length; i++) {
-      var percent = String(values[i][values[0].length - 1] || '');
-      if (!/^\d+(\.\d+)?%$/.test(percent)) throw new Error(values[i][0] + ' percent is "' + percent + '"');
-      parts.push(values[i][0] + '=' + percent);
-      Logger.log('testAccuracy %s %s/%s %s', values[i][0], values[i][2], values[i][1], percent);
+      var percent = values[i][values[0].length - 1];
+      var fraction = matchPercentNumber(percent);
+      if (fraction == null) throw new Error(values[i][0] + ' percent is "' + percent + '"');
+      parts.push(values[i][0] + '=' + fraction);
+      Logger.log('testAccuracy %s %s/%s %s', values[i][0], values[i][2], values[i][1], fraction);
     }
     pass = true;
     detail = parts.join(' ');

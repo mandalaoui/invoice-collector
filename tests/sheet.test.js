@@ -159,3 +159,19 @@ test('invoice rows are written once per message and a repeated document is DUPLI
   assert.equal(sheet.buildInvoiceRow(first).length, config.INVOICE_HEADERS.length);
   assert.equal(sheet.invoiceSourceId('m1 01-tax'), 'm1');
 });
+
+test('doc_date is written as one Date with yyyy-mm-dd', () => {
+  global.INVOICE_HEADERS = config.INVOICE_HEADERS;
+  const fromDmy = sheet.sheetDateValue('02/11/2026');
+  const fromIso = sheet.sheetDateValue('2026-11-02');
+  assert.equal(Object.prototype.toString.call(fromDmy), '[object Date]');
+  assert.equal(fromDmy.getFullYear(), 2026);
+  assert.equal(fromDmy.getMonth(), 10);
+  assert.equal(fromDmy.getDate(), 2);
+  assert.equal(fromDmy.getTime(), fromIso.getTime());
+  const column = config.INVOICE_HEADERS.indexOf('doc_date');
+  const row = sheet.buildInvoiceRow({ doc_date: '02/11/2026' });
+  assert.equal(row[column].getTime(), fromIso.getTime());
+  assert.equal(sheet.invoiceNumberFormat('doc_date'), 'yyyy-mm-dd');
+  assert.equal(sheet.buildInvoiceRow({ doc_date: '' })[column], '');
+});

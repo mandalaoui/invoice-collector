@@ -113,6 +113,16 @@ test('vendor id and document number pair rows that have no file stem', () => {
   assert.equal(byField.doc_date.match_percent, '100%');
 });
 
+test('match percent accepts a fraction or a percent string', () => {
+  assert.equal(report.matchPercentNumber(1), 1);
+  assert.equal(report.matchPercentNumber('100%'), 1);
+  assert.equal(report.matchPercentNumber(0.875), 0.875);
+  assert.equal(report.matchPercentNumber('87.5%'), 0.875);
+  assert.equal(report.matchPercentNumber(''), null);
+  assert.equal(report.matchPercentsEqual(1, '100%'), true);
+  assert.equal(report.matchPercentsEqual(0.875, '87.5%'), true);
+});
+
 test('an empty answer key writes percents as blank', () => {
   const scored = report.compareInvoicesToAnswerKey(invoiceRows(), []);
   assert.equal(scored.pairs, 0);

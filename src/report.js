@@ -79,6 +79,34 @@ function formatMatchPercent_(matches, total) {
   return value + '%';
 }
 
+/**
+ * 1 and "100%" are the same. A number above 1 is a percent, not a fraction.
+ * @return {number|null}
+ */
+function matchPercentNumber(value) {
+  if (value == null || value === '') return null;
+  if (typeof value === 'number') {
+    if (!isFinite(value)) return null;
+    if (value >= 0 && value <= 1) return value;
+    return value / 100;
+  }
+  var text = String(value).trim();
+  if (!text) return null;
+  var withSign = text.match(/^(\d+(?:\.\d+)?)%$/);
+  if (withSign) return Number(withSign[1]) / 100;
+  if (!/^\d+(?:\.\d+)?$/.test(text)) return null;
+  var parsed = Number(text);
+  if (parsed >= 0 && parsed <= 1) return parsed;
+  return parsed / 100;
+}
+
+function matchPercentsEqual(actual, expected) {
+  var left = matchPercentNumber(actual);
+  var right = matchPercentNumber(expected);
+  if (left == null || right == null) return false;
+  return Math.abs(left - right) < 0.0005;
+}
+
 function namedFileStem_(value) {
   var text = String(value || '');
   var match = text.match(/([A-Za-z0-9][A-Za-z0-9_-]*\.(?:pdf|html|jpg|jpeg|png))/i);
@@ -1300,6 +1328,8 @@ if (typeof module !== 'undefined') {
   module.exports = {
     ACCURACY_FIELDS: ACCURACY_FIELDS,
     fieldValuesEqual: fieldValuesEqual,
+    matchPercentNumber: matchPercentNumber,
+    matchPercentsEqual: matchPercentsEqual,
     compareInvoicesToAnswerKey: compareInvoicesToAnswerKey,
     comparisonGrid: comparisonGrid,
     rowFileStem_: rowFileStem_,

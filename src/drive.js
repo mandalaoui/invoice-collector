@@ -164,6 +164,27 @@ function decideFileWrite(existingFiles, fileName, source) {
   return { action: 'create' };
 }
 
+/** Pack files are not fixture originals. */
+function isPackMonthFile_(name) {
+  var text = String(name || '');
+  if (/_merged\.pdf$/i.test(text)) return true;
+  if (/^__test_run_.*\.pdf$/i.test(text)) return true;
+  return false;
+}
+
+/**
+ * @param {string[]} names
+ * @return {number}
+ */
+function countFixtureMonthFiles(names) {
+  var count = 0;
+  var list = names || [];
+  for (var i = 0; i < list.length; i++) {
+    if (!isPackMonthFile_(list[i])) count++;
+  }
+  return count;
+}
+
 function childFolder_(parent, name) {
   var found = parent.getFoldersByName(name);
   if (found.hasNext()) return found.next();
@@ -311,6 +332,7 @@ if (typeof module !== 'undefined') {
     isPdfBytes: isPdfBytes,
     mimeForFileName: mimeForFileName,
     copyMime: copyMime,
+    countFixtureMonthFiles: countFixtureMonthFiles,
     chooseSaveFolder: chooseSaveFolder,
     decideFileWrite: decideFileWrite,
     ensureMonthFolder: ensureMonthFolder,

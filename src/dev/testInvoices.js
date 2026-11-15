@@ -322,8 +322,11 @@ function invoiceFieldEqual_(key, actual, expected) {
   if (typeof expected === 'boolean') {
     return actual === expected || String(actual).toLowerCase() === String(expected);
   }
-  if (key === 'doc_date' && Object.prototype.toString.call(actual) === '[object Date]') {
-    return false;
+  if (key === 'doc_date') {
+    var left = sheetDateValue(actual);
+    var right = sheetDateValue(expected);
+    if (!left || !right) return false;
+    return left.getTime() === right.getTime();
   }
   return String(actual).trim() === String(expected);
 }

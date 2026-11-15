@@ -264,11 +264,56 @@ function planInvoiceRows(existing, incoming) {
   return writes;
 }
 
+var SHEET_DATE_FORMAT = 'yyyy-mm-dd';
+
+/**
+ * One calendar date for DD/MM/YYYY and YYYY-MM-DD. Blank stays blank.
+ * @return {Date|string}
+ */
+function sheetDateValue(value) {
+  if (value == null || value === '') return '';
+  var year;
+  var month;
+  var day;
+  if (Object.prototype.toString.call(value) === '[object Date]') {
+    if (isNaN(value.getTime())) return '';
+    year = value.getFullYear();
+    month = value.getMonth() + 1;
+    day = value.getDate();
+  } else {
+    var text = String(value).trim();
+    var iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    var dmy = text.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})/);
+    if (iso) {
+      year = Number(iso[1]);
+      month = Number(iso[2]);
+      day = Number(iso[3]);
+    } else if (dmy) {
+      year = Number(dmy[3]);
+      month = Number(dmy[2]);
+      day = Number(dmy[1]);
+    } else {
+      return '';
+    }
+  }
+  if (month < 1 || month > 12 || day < 1 || day > 31) return '';
+  return new Date(year, month - 1, day);
+}
+
+function invoiceNumberFormat(key) {
+  if (key === 'doc_date') return SHEET_DATE_FORMAT;
+  if (key === 'vendor_id' || key === 'doc_number' || key === 'allocation_number' || key === 'source') {
+    return '@';
+  }
+  return 'General';
+}
+
 function buildInvoiceRow(entry) {
   var source = entry || {};
   return INVOICE_HEADERS.map(function (key) {
     var value = source[key];
-    if (value == null) return '';
+    if (value == null || value === '') return '';
+    if (key === 'doc_date') return sheetDateValue(value);
     return value;
   });
 }
@@ -308,12 +353,7 @@ function appendInvoiceRows(rows) {
   var sheet = invoiceSheet_();
   var grid = writes.map(buildInvoiceRow);
   var formats = grid.map(function () {
-    return INVOICE_HEADERS.map(function (key) {
-      if (key === 'doc_date' || key === 'vendor_id' || key === 'doc_number' || key === 'allocation_number' || key === 'source') {
-        return '@';
-      }
-      return 'General';
-    });
+    return INVOICE_HEADERS.map(invoiceNumberFormat);
   });
   var range = sheet.getRange(sheet.getLastRow() + 1, 1, grid.length, INVOICE_HEADERS.length);
   range.setNumberFormats(formats);
@@ -334,6 +374,9 @@ if (typeof module !== 'undefined') {
     buildRunLogRow: buildRunLogRow,
     invoiceSourceId: invoiceSourceId,
     planInvoiceRows: planInvoiceRows,
-    buildInvoiceRow: buildInvoiceRow
+    buildInvoiceRow: buildInvoiceRow,
+    sheetDateValue: sheetDateValue,
+    invoiceNumberFormat: invoiceNumberFormat,
+    SHEET_DATE_FORMAT: SHEET_DATE_FORMAT
   };
 }

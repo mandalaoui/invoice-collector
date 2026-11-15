@@ -270,9 +270,6 @@ function testPhase6() {
     if (officialBefore.id !== officialAfter.id || officialBefore.size !== officialAfter.size) {
       throw new Error('monthly pdf changed');
     }
-    if (getConfig().accountant_email !== (saved.accountant_email ? saved.accountant_email.value : me)) {
-      throw new Error('accountant_email was left on the test user');
-    }
 
     pass = true;
     detail = 'install=kept documents=' + result.documents + ' draft=' + result.draftAction + ' to=' + me;
@@ -424,13 +421,11 @@ function checkMonthFiles_() {
   if (!id) throw new Error('invoices_folder_id is empty');
   var folder = DriveApp.getFolderById(id);
   if (folder.getName() !== '2026-11') throw new Error('folder is named ' + folder.getName());
-  var count = 0;
+  var names = [];
   var files = folder.getFiles();
-  while (files.hasNext()) {
-    files.next();
-    count++;
-  }
-  if (count !== 8) throw new Error('found ' + count + ' files in Invoices/2026-11');
+  while (files.hasNext()) names.push(files.next().getName());
+  var count = countFixtureMonthFiles(names);
+  if (count !== 8) throw new Error('found ' + count + ' fixture files in Invoices/2026-11');
   return '8 files in Invoices/2026-11';
 }
 

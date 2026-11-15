@@ -108,6 +108,18 @@ test('the month folder is Invoices/2026-11', () => {
   assert.equal(drive.chooseSaveFolder({ id: 'abc', name: 'Invoices' }, '2026-11').action, 'reject');
 });
 
+test('fixture file counts skip the merged pdf and the test-run pdf', () => {
+  assert.equal(
+    drive.countFixtureMonthFiles([
+      '2026-11-02_קפה_הכרמל_01-tax-invoice-receipt-he.pdf',
+      '2026-11_merged.pdf',
+      '__test_run_2026-11.pdf',
+      '2026-11-03_Northwind_Ledger_02-saas-invoice-en.pdf'
+    ]),
+    2
+  );
+});
+
 test('copy mime keeps PDF and JPEG and does not invent a conversion', () => {
   assert.equal(drive.copyMime('application/pdf', '01-tax-invoice-receipt-he.pdf'), 'application/pdf');
   assert.equal(drive.copyMime('image/jpeg', '05-photo-receipt.jpg'), 'image/jpeg');
