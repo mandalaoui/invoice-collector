@@ -170,9 +170,11 @@ function amountForKeywords_(lines, keywords, skipKeywords) {
 }
 
 function docToken_(line) {
-  var withoutDates = stripDates_(line);
-  var coded = /\b((?:INV|Q)-?\d[\w-]*)/i.exec(withoutDates);
-  if (coded) return coded[1];
+  var withoutDates = stripDates_(line).replace(/[–—−‐‑]/g, '-');
+  var coded = /[A-Za-z][A-Za-z0-9]{0,12}(?:\s*-\s*[A-Za-z0-9]+)+/.exec(withoutDates);
+  if (coded) return coded[0].replace(/\s+/g, '');
+  var reversed = /(\d+)\s*-\s*([A-Za-z][A-Za-z0-9]{0,12})/.exec(withoutDates);
+  if (reversed) return reversed[2] + '-' + reversed[1];
   var numbers = withoutDates.match(/\d{3,8}/g);
   return numbers && numbers.length ? numbers[0] : null;
 }
@@ -181,9 +183,30 @@ function findDocNumber_(lines, config) {
   var keywords = (config.keywords_doc_number || []).slice();
   keywords.push('קבלה מספר');
   keywords.push("מס' מסמך");
-  var index = firstKeywordLine_(lines, keywords, config.keywords_allocation || []);
-  if (index < 0) return null;
-  return docToken_(lines[index]);
+  keywords.push('הצעת מחיר');
+  keywords.push('Quote');
+  keywords.push('מספר');
+  var skip = config.keywords_allocation || [];
+  var k;
+  var i;
+  for (k = 0; k < keywords.length; k++) {
+    for (i = 0; i < lines.length; i++) {
+      if (!phraseHits_(lines[i], keywords[k])) continue;
+      var blocked = false;
+      var s;
+      for (s = 0; s < skip.length; s++) {
+        if (squashExtract_(skip[s]) !== squashExtract_(keywords[k]) && phraseHits_(lines[i], skip[s])) blocked = true;
+      }
+      if (blocked) continue;
+      var delta;
+      for (delta = 0; delta <= 6; delta++) {
+        if (i + delta >= lines.length) break;
+        var token = docToken_(lines[i + delta]);
+        if (token) return token;
+      }
+    }
+  }
+  return null;
 }
 
 function findDate_(lines, config) {

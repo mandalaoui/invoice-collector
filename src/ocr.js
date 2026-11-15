@@ -526,27 +526,54 @@ function readDocumentText(input) {
   return { text: '', source: 'empty' };
 }
 
-function driveConvertText_(blob, useOcr, mime, name) {
-  var blobType = mimeBase_(blob.getContentType ? blob.getContentType() : mime);
-  if (useOcr && !allowsOcr(blobType || mime, name)) {
-    throw new Error('OCR is only supported for PDF and image files, not ' + (blobType || mime || 'unknown'));
+/**
+ * One insert of the image or PDF bytes. OCR options stay on that upload.
+ * The resource is not a Google Doc; Drive creates the Doc because convert is true.
+ */
+function driveOcrText_(blob, mime, name) {
+  var uploadType = mimeBase_(mime);
+  if (!allowsOcr(uploadType, name)) {
+    throw new Error('OCR is only supported for PDF and image files, not ' + (uploadType || 'unknown'));
   }
   if (typeof Drive === 'undefined' || !Drive.Files || typeof Drive.Files.insert !== 'function') {
     throw new Error('Enable the Drive advanced service (Drive API v2). It is required for OCR.');
   }
-  var created = Drive.Files.insert(
-    {
-      title: TEMP_OCR_TITLE,
-      mimeType: 'application/vnd.google-apps.document',
-      parents: [{ id: DriveApp.getRootFolder().getId() }]
-    },
-    blob,
-    useOcr ? { convert: true, ocr: true, ocrLanguage: 'he' } : { convert: true }
-  );
+  var media = blob && blob.setContentType ? blob.setContentType(uploadType) : blob;
+  var created = null;
   try {
+    created = Drive.Files.insert(
+      {
+        title: TEMP_OCR_TITLE,
+        parents: [{ id: DriveApp.getRootFolder().getId() }]
+      },
+      media,
+      { convert: true, ocr: true, ocrLanguage: 'he' }
+    );
     return DocumentApp.openById(created.id).getBody().getText();
   } finally {
-    DriveApp.getFileById(created.id).setTrashed(true);
+    if (created && created.id) DriveApp.getFileById(created.id).setTrashed(true);
+  }
+}
+
+function driveConvertText_(blob, useOcr, mime, name) {
+  if (useOcr) return driveOcrText_(blob, mime, name);
+  if (typeof Drive === 'undefined' || !Drive.Files || typeof Drive.Files.insert !== 'function') {
+    throw new Error('Enable the Drive advanced service (Drive API v2). It is required for OCR.');
+  }
+  var created = null;
+  try {
+    created = Drive.Files.insert(
+      {
+        title: TEMP_OCR_TITLE,
+        mimeType: 'application/vnd.google-apps.document',
+        parents: [{ id: DriveApp.getRootFolder().getId() }]
+      },
+      blob,
+      { convert: true }
+    );
+    return DocumentApp.openById(created.id).getBody().getText();
+  } finally {
+    if (created && created.id) DriveApp.getFileById(created.id).setTrashed(true);
   }
 }
 
@@ -588,6 +615,9 @@ function readDriveFileText(file) {
   if (kind === 'html') {
     return { text: htmlToText(blob.getDataAsString()), source: 'html', name: fileName, mimeType: mime };
   }
+  if (kind === 'image') {
+    return { text: driveOcrText_(blob, mime, fileName), source: 'ocr', name: fileName, mimeType: mime };
+  }
   var read = readDocumentText({ name: fileName, mime: mime, bytes: blob.getBytes() });
   read.name = fileName;
   read.mimeType = mime;
@@ -601,7 +631,7 @@ function readDriveFileText(file) {
       return { text: converted, source: 'text-layer', name: fileName, mimeType: mime };
     }
   }
-  return { text: driveConvertText_(blob, true, mime, fileName), source: 'ocr', name: fileName, mimeType: mime };
+  return { text: driveOcrText_(blob, mime, fileName), source: 'ocr', name: fileName, mimeType: mime };
 }
 
 /** @deprecated Use readDriveFileText so the file mime type is known. */
@@ -619,7 +649,7 @@ function readDriveBlobText(blob, name) {
     var converted = driveConvertText_(blob, false, mime, fileName);
     if (textLayerIsUsable(converted)) return { text: converted, source: 'text-layer' };
   }
-  return { text: driveConvertText_(blob, true, mime, fileName), source: 'ocr' };
+  return { text: driveOcrText_(blob, mime, fileName), source: 'ocr' };
 }
 
 if (typeof module !== 'undefined') {
@@ -630,6 +660,8 @@ if (typeof module !== 'undefined') {
     readDocumentText: readDocumentText,
     textSourceForMime: textSourceForMime,
     allowsOcr: allowsOcr,
-    isTempOcrFile: isTempOcrFile
+    isTempOcrFile: isTempOcrFile,
+    driveOcrText_: driveOcrText_,
+    readDriveFileText: readDriveFileText
   };
 }

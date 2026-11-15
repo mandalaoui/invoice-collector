@@ -30,7 +30,8 @@ Check longest match first.
 - Prefer near `תאריך`, `תאריך הפקה`, `Date`, `Invoice date`. Must fall in or near the target month.
 
 ## Document number
-- Near `מס' חשבונית`, `חשבונית מס מספר`, `מספר מסמך`, `מס' מסמך`, `קבלה מספר`, `Invoice #`, `Invoice No`.
+- Near `מס' חשבונית`, `חשבונית מס מספר`, `מספר מסמך`, `מס' מסמך`, `קבלה מספר`, `Invoice #`, `Invoice No`, `הצעת מחיר`, `מספר`, `Quote`.
+- A document number is digits, or letters, digits, and dashes (`10482`, `INV-44190`, `Q-17`).
 
 ## Vendor ID
 - `ח.פ`, `ע.מ`, `עוסק מורשה`, `ח"פ` followed by 9 digits. Exclude the company's own ID (from Settings).

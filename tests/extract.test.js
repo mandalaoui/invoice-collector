@@ -125,6 +125,20 @@ test('statuses flag bad samples and leave consistent tax invoices OK', () => {
   assert.ok(broken.reasons.some((reason) => /allocation/i.test(reason)));
 });
 
+test('a quote number of letters, digits, and a dash is kept', () => {
+  const settings = fixtureConfig();
+  const nearTitle = extract.extractInvoice(
+    ['הצעת מחיר', 'ציוד דמה בע"מ', 'Q-17'].join('\n'),
+    settings,
+    {}
+  );
+  assert.equal(nearTitle.doc_number, 'Q-17');
+  const sameLine = extract.extractInvoice('מספר: Q-17\nסה"כ לתשלום: 4,248.00', settings, {});
+  assert.equal(sameLine.doc_number, 'Q-17');
+  const quote = extract.extractInvoice('Quote Q-17\nTotal due: 100', settings, {});
+  assert.equal(quote.doc_number, 'Q-17');
+});
+
 test('Hebrew quotes and מס׳ normalize before matching', () => {
   assert.equal(extract.normalizeExtractText('מס׳ 10482'), 'מספר 10482');
   assert.equal(extract.normalizeExtractText('סה״כ'), 'סה"כ');

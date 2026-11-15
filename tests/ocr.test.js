@@ -103,6 +103,63 @@ test('OCR is only offered for PDFs and images', () => {
   assert.match(html.text, /1,770/);
 });
 
+test('a JPEG is OCR’d once, then the temp Doc is deleted', () => {
+  const inserts = [];
+  let trashed = '';
+  const blob = {
+    contentType: 'application/vnd.google-apps.document',
+    setContentType(type) {
+      this.contentType = type;
+      return this;
+    },
+    getContentType() {
+      return this.contentType;
+    },
+    getBytes() {
+      return [1, 2, 3];
+    }
+  };
+  global.Drive = {
+    Files: {
+      insert(resource, media, options) {
+        inserts.push({ resource, media, options });
+        return { id: 'temp-doc' };
+      }
+    }
+  };
+  global.DocumentApp = {
+    openById(id) {
+      assert.equal(id, 'temp-doc');
+      return { getBody: () => ({ getText: () => 'קבלה מספר 3188' }) };
+    }
+  };
+  global.DriveApp = {
+    getRootFolder: () => ({ getId: () => 'root' }),
+    getFileById(id) {
+      return { setTrashed: () => { trashed = id; } };
+    }
+  };
+  try {
+    const read = ocr.readDriveFileText({
+      getName: () => '05-photo-receipt.jpg',
+      getMimeType: () => 'image/jpeg',
+      getBlob: () => blob
+    });
+    assert.equal(inserts.length, 1);
+    assert.deepEqual(inserts[0].options, { convert: true, ocr: true, ocrLanguage: 'he' });
+    assert.equal(inserts[0].resource.mimeType, undefined);
+    assert.equal(inserts[0].resource.parents[0].id, 'root');
+    assert.equal(inserts[0].media.contentType, 'image/jpeg');
+    assert.equal(read.source, 'ocr');
+    assert.match(read.text, /3188/);
+    assert.equal(trashed, 'temp-doc');
+  } finally {
+    delete global.Drive;
+    delete global.DocumentApp;
+    delete global.DriveApp;
+  }
+});
+
 test('a usable text layer is not sent to OCR', () => {
   let called = false;
   const read = ocr.readDocumentText({

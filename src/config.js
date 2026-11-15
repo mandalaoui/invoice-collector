@@ -146,7 +146,7 @@ var SETTINGS_FIELDS = [
   },
   {
     key: 'keywords_doc_number',
-    value: ['מס\' חשבונית', 'חשבונית מס מספר', 'מספר מסמך', 'מס\' מסמך', 'קבלה מספר', 'Invoice #', 'Invoice No'].join('\n'),
+    value: ['מס\' חשבונית', 'חשבונית מס מספר', 'מספר מסמך', 'מס\' מסמך', 'קבלה מספר', 'Invoice #', 'Invoice No', 'הצעת מחיר', 'מספר', 'Quote'].join('\n'),
     type: 'lines',
     note: 'Source: docs/RULES.md.'
   },
