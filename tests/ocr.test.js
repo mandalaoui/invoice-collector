@@ -206,6 +206,45 @@ test('a rejected OCR language is retried without ocrLanguage and the request is 
   }
 });
 
+test('OCR cache returns the stored text and ignores an empty row', () => {
+  const hit = ocr.ocrCacheLookup_(
+    [
+      ['fileId', 'mimeType', 'text', 'date'],
+      ['file-1', 'image/jpeg', 'קבלה 3188', '2026-11-15'],
+      ['file-2', 'image/jpeg', '', '2026-11-15']
+    ],
+    'file-1'
+  );
+  assert.equal(hit.text, 'קבלה 3188');
+  assert.equal(hit.mimeType, 'image/jpeg');
+  assert.equal(ocr.ocrCacheLookup_([['fileId', 'mimeType', 'text', 'date'], ['file-2', 'image/jpeg', '', '']], 'file-2'), null);
+  assert.equal(ocr.isDriveRateLimit_(new Error('User rate limit exceeded')), true);
+  assert.equal(ocr.isDriveRateLimit_(new Error('Invalid Value')), false);
+});
+
+test('a cached file is not sent to Drive OCR', () => {
+  const inserts = [];
+  global.OCR_CACHE_ROWS_FOR_TEST = [
+    ['fileId', 'mimeType', 'text', 'date'],
+    ['cached-file', 'image/jpeg', 'cached receipt 3188', '2026-11-15']
+  ];
+  global.Drive = { Files: { insert() { inserts.push(true); return { id: 'x' }; } } };
+  try {
+    const read = ocr.readDriveFileText({
+      getId: () => 'cached-file',
+      getName: () => '05-photo-receipt.jpg',
+      getMimeType: () => 'image/jpeg',
+      getBlob: jpegBlob
+    });
+    assert.equal(inserts.length, 0);
+    assert.equal(read.source, 'cache');
+    assert.equal(read.text, 'cached receipt 3188');
+  } finally {
+    delete global.OCR_CACHE_ROWS_FOR_TEST;
+    delete global.Drive;
+  }
+});
+
 test('a usable text layer is not sent to OCR', () => {
   let called = false;
   const read = ocr.readDocumentText({

@@ -193,17 +193,21 @@ function idFragment_(token, ids) {
   return false;
 }
 
-function alphanumericDocToken_(line) {
-  var withoutDates = stripDates_(line).replace(/[–—−‐‑]/g, '-');
-  var coded = /[A-Za-z][A-Za-z0-9]{0,12}(?:\s*-\s*[A-Za-z0-9]+)+/.exec(withoutDates);
-  if (coded) return coded[0].replace(/\s+/g, '');
-  var reversed = /(\d+)\s*-\s*([A-Za-z][A-Za-z0-9]{0,12})/.exec(withoutDates);
-  if (reversed) return reversed[2] + '-' + reversed[1];
-  return null;
+function withoutMoney_(line) {
+  return String(line || '')
+    .replace(/-?\d{1,3}(?:,\d{3})+(?:\.\d+)?/g, ' ')
+    .replace(/-?\d+\.\d+/g, ' ');
+}
+
+/** Q-17, INV-44190. Amounts and 9-digit ids do not match. */
+function letterDocToken_(line) {
+  var cleaned = withoutMoney_(stripDates_(line)).replace(/[–—−‐‑]/g, '-');
+  var match = /(?:^|[^A-Za-z0-9])([A-Z]+-?\d+)/i.exec(cleaned);
+  return match ? match[1] : null;
 }
 
 function numericDocToken_(line, ids) {
-  var withoutDates = stripDates_(line);
+  var withoutDates = withoutMoney_(stripDates_(line));
   var match;
   var pattern = /(?:^|[^\d])(\d{3,8})(?!\d)/g;
   while ((match = pattern.exec(withoutDates))) {
@@ -211,6 +215,11 @@ function numericDocToken_(line, ids) {
     return match[1];
   }
   return null;
+}
+
+function quoteDocLabel_(keyword) {
+  var flat = squashExtract_(keyword);
+  return flat === squashExtract_('הצעת מחיר') || flat === squashExtract_('quote') || flat === squashExtract_('מספר');
 }
 
 function findDocNumber_(lines, config) {
@@ -233,15 +242,19 @@ function findDocNumber_(lines, config) {
         if (squashExtract_(skip[s]) !== squashExtract_(keywords[k]) && phraseHits_(lines[i], skip[s])) blocked = true;
       }
       if (blocked) continue;
-      var alphanumeric = null;
-      var numeric = null;
-      var delta;
-      for (delta = 0; delta <= 6; delta++) {
-        if (i + delta >= lines.length) break;
-        if (!alphanumeric) alphanumeric = alphanumericDocToken_(lines[i + delta]);
-        if (!numeric) numeric = numericDocToken_(lines[i + delta], ids);
+      if (quoteDocLabel_(keywords[k])) {
+        var after;
+        for (after = i; after < lines.length; after++) {
+          var quoted = letterDocToken_(lines[after]);
+          if (quoted) return quoted;
+        }
+        continue;
       }
-      if (alphanumeric) return alphanumeric;
+      var letter = letterDocToken_(lines[i]);
+      if (!letter && i + 1 < lines.length) letter = letterDocToken_(lines[i + 1]);
+      if (letter) return letter;
+      var numeric = numericDocToken_(lines[i], ids);
+      if (!numeric && i + 1 < lines.length) numeric = numericDocToken_(lines[i + 1], ids);
       if (numeric) return numeric;
     }
   }

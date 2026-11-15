@@ -526,6 +526,78 @@ function readDocumentText(input) {
   return { text: '', source: 'empty' };
 }
 
+var OCR_CACHE_SHEET = 'OcrCache';
+var OCR_CACHE_HEADERS = ['fileId', 'mimeType', 'text', 'date'];
+
+function isDriveRateLimit_(error) {
+  return String(error && error.message ? error.message : error).indexOf('User rate limit exceeded') >= 0;
+}
+
+/** Up to 3 retries, 30 seconds apart, only for Drive's user rate limit. */
+function withDriveRetry_(run) {
+  var attempt = 0;
+  while (true) {
+    try {
+      return run();
+    } catch (error) {
+      if (!isDriveRateLimit_(error) || attempt >= 3) throw error;
+      attempt++;
+      if (typeof Logger !== 'undefined' && Logger.log) {
+        Logger.log('User rate limit exceeded, waiting 30s, retry %s/3', attempt);
+      }
+      if (typeof Utilities !== 'undefined' && Utilities.sleep) Utilities.sleep(30000);
+    }
+  }
+}
+
+function ocrCacheLookup_(rows, fileId) {
+  var grid = rows || [];
+  var id = String(fileId || '');
+  if (!id) return null;
+  for (var i = 1; i < grid.length; i++) {
+    if (String(grid[i][0] || '') !== id) continue;
+    var text = String(grid[i][2] || '');
+    if (!text) return null;
+    return { fileId: id, mimeType: String(grid[i][1] || ''), text: text, date: grid[i][3] };
+  }
+  return null;
+}
+
+function ocrCacheSheet_() {
+  var ss = openCollectorSpreadsheet_();
+  var sheet = ss.getSheetByName(OCR_CACHE_SHEET);
+  if (!sheet) {
+    sheet = ss.insertSheet(OCR_CACHE_SHEET);
+    sheet.appendRow(OCR_CACHE_HEADERS.slice());
+    sheet.hideSheet();
+  }
+  return sheet;
+}
+
+function readOcrCache_(fileId) {
+  if (typeof global !== 'undefined' && global.OCR_CACHE_ROWS_FOR_TEST) {
+    return ocrCacheLookup_(global.OCR_CACHE_ROWS_FOR_TEST, fileId);
+  }
+  if (!fileId || typeof SpreadsheetApp === 'undefined') return null;
+  var sheet = ocrCacheSheet_();
+  return ocrCacheLookup_(sheet.getDataRange().getValues(), fileId);
+}
+
+function writeOcrCache_(fileId, mimeType, text) {
+  if (typeof global !== 'undefined' && global.OCR_CACHE_ROWS_FOR_TEST) return;
+  if (!fileId || !text || typeof SpreadsheetApp === 'undefined') return;
+  var sheet = ocrCacheSheet_();
+  var values = sheet.getDataRange().getValues();
+  var row = [String(fileId), String(mimeType || ''), String(text), new Date()];
+  for (var i = 1; i < values.length; i++) {
+    if (String(values[i][0] || '') === String(fileId)) {
+      sheet.getRange(i + 1, 1, 1, 4).setValues([row]);
+      return;
+    }
+  }
+  sheet.appendRow(row);
+}
+
 function ocrInsertFailed_(resource, options, error) {
   var detail = 'drive.files.insert resource=' + JSON.stringify(resource) +
     ' options=' + JSON.stringify(options) +
@@ -551,23 +623,26 @@ function driveOcrText_(blob, mime, name) {
   var sourceType = media && media.getContentType ? String(media.getContentType()) : uploadType;
   var resource = { title: TEMP_OCR_TITLE, mimeType: sourceType };
   var withLanguage = { ocr: true, ocrLanguage: 'iw' };
-  var created = null;
-  try {
+  return withDriveRetry_(function () {
+    var created = null;
     try {
-      created = Drive.Files.insert(resource, media, withLanguage);
-    } catch (error) {
-      ocrInsertFailed_(resource, withLanguage, error);
-      var ocrOnly = { ocr: true };
       try {
-        created = Drive.Files.insert(resource, media, ocrOnly);
-      } catch (again) {
-        throw ocrInsertFailed_(resource, ocrOnly, again);
+        created = Drive.Files.insert(resource, media, withLanguage);
+      } catch (error) {
+        if (isDriveRateLimit_(error)) throw error;
+        ocrInsertFailed_(resource, withLanguage, error);
+        var ocrOnly = { ocr: true };
+        try {
+          created = Drive.Files.insert(resource, media, ocrOnly);
+        } catch (again) {
+          throw ocrInsertFailed_(resource, ocrOnly, again);
+        }
       }
+      return DocumentApp.openById(created.id).getBody().getText();
+    } finally {
+      if (created && created.id) DriveApp.getFileById(created.id).setTrashed(true);
     }
-    return DocumentApp.openById(created.id).getBody().getText();
-  } finally {
-    if (created && created.id) DriveApp.getFileById(created.id).setTrashed(true);
-  }
+  });
 }
 
 function driveConvertText_(blob, useOcr, mime, name) {
@@ -575,6 +650,7 @@ function driveConvertText_(blob, useOcr, mime, name) {
   if (typeof Drive === 'undefined' || !Drive.Files || typeof Drive.Files.insert !== 'function') {
     throw new Error('Enable the Drive advanced service (Drive API v2). It is required for OCR.');
   }
+  return withDriveRetry_(function () {
   var created = null;
   try {
     created = Drive.Files.insert(
@@ -590,6 +666,7 @@ function driveConvertText_(blob, useOcr, mime, name) {
   } finally {
     if (created && created.id) DriveApp.getFileById(created.id).setTrashed(true);
   }
+  });
 }
 
 /**
@@ -614,6 +691,19 @@ function trashTempOcrFiles(folder) {
  * @return {{text: string, source: string, name: string, mimeType: string}}
  */
 function readDriveFileText(file) {
+  var fileName = file.getName();
+  var mime = file.getMimeType();
+  var fileId = file.getId ? file.getId() : '';
+  var cached = readOcrCache_(fileId);
+  if (cached && cached.text) {
+    return { text: cached.text, source: 'cache', name: fileName, mimeType: cached.mimeType || mime };
+  }
+  var read = readDriveFileUncached_(file);
+  if (fileId && read && read.text) writeOcrCache_(fileId, read.mimeType || mime, read.text);
+  return read;
+}
+
+function readDriveFileUncached_(file) {
   var fileName = file.getName();
   var mime = file.getMimeType();
   var kind = textSourceForMime(mime, fileName);
@@ -677,6 +767,8 @@ if (typeof module !== 'undefined') {
     allowsOcr: allowsOcr,
     isTempOcrFile: isTempOcrFile,
     driveOcrText_: driveOcrText_,
-    readDriveFileText: readDriveFileText
+    readDriveFileText: readDriveFileText,
+    ocrCacheLookup_: ocrCacheLookup_,
+    isDriveRateLimit_: isDriveRateLimit_
   };
 }

@@ -153,6 +153,20 @@ test('a quote number of letters, digits, and a dash is kept', () => {
   );
   assert.equal(besideIds.doc_number, 'Q-17');
   assert.notEqual(besideIds.doc_number, '99010009');
+
+  const amounts = extract.extractInvoice(
+    [
+      'הצעת מחיר',
+      'ח.פ 990100091',
+      'מדפסת דמה 2,400.00',
+      'סה"כ לתשלום: 4,248.00',
+      'Q-17'
+    ].join('\n'),
+    settings,
+    {}
+  );
+  assert.equal(amounts.doc_number, 'Q-17');
+  assert.notEqual(amounts.doc_number, '400');
 });
 
 test('Hebrew quotes and מס׳ normalize before matching', () => {
