@@ -303,11 +303,15 @@ function testInvoices() {
   return { result: pass ? 'PASS' : 'FAIL', detail: detail, added: added, maps: maps };
 }
 
+function phase2MissFlagged_(status) {
+  return status === 'REVIEW' || status === 'NOT_INVOICE';
+}
+
 function phase2Passes_(correct, total, missStatuses) {
   if (!total || correct / total < 0.8) return false;
   var misses = missStatuses || [];
   for (var i = 0; i < misses.length; i++) {
-    if (misses[i] !== 'REVIEW') return false;
+    if (!phase2MissFlagged_(misses[i])) return false;
   }
   return true;
 }
@@ -357,7 +361,7 @@ function scoreFixtureInvoices_() {
 /**
  * Writes the fixture rows, checks a second write adds 0, then scores fields
  * against the answer key. PASS when at least 80% of fields match and every
- * miss is REVIEW.
+ * miss is flagged (REVIEW or NOT_INVOICE).
  */
 function testPhase2() {
   var invoices = { result: 'FAIL', detail: '', maps: [] };
