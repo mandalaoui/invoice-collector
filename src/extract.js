@@ -161,12 +161,59 @@ function firstKeywordLine_(lines, keywords, skipKeywords) {
   return -1;
 }
 
+function keywordTail_(line, phrase, skipKeywords) {
+  var text = normalizeExtractText(line);
+  var needle = normalizeExtractText(phrase);
+  if (!needle) return null;
+  var from = 0;
+  while (from < text.length) {
+    var at = text.indexOf(needle, from);
+    if (at < 0) return null;
+    var inside = false;
+    var skips = skipKeywords || [];
+    var s;
+    for (s = 0; s < skips.length; s++) {
+      var skip = normalizeExtractText(skips[s]);
+      if (!skip || skip === needle) continue;
+      var skipAt = text.lastIndexOf(skip, at);
+      if (skipAt >= 0 && at >= skipAt && at + needle.length <= skipAt + skip.length) inside = true;
+    }
+    if (!inside) return text.slice(at + needle.length);
+    from = at + Math.max(needle.length, 1);
+  }
+  return null;
+}
+
 function amountForKeywords_(lines, keywords, skipKeywords) {
-  var index = firstKeywordLine_(lines, keywords, skipKeywords);
-  if (index < 0) return null;
-  var amount = parseAmounts_(lines[index]);
-  if (amount == null && index + 1 < lines.length) amount = parseAmounts_(lines[index + 1]);
-  return amount;
+  var list = keywords || [];
+  var skip = skipKeywords || [];
+  var k;
+  var i;
+  for (k = 0; k < list.length; k++) {
+    for (i = 0; i < lines.length; i++) {
+      if (!phraseHits_(lines[i], list[k])) continue;
+      var tail = keywordTail_(lines[i], list[k], skip);
+      var amount = tail != null ? parseAmounts_(tail) : null;
+      if (tail != null && amount == null) {
+        var text = normalizeExtractText(lines[i]);
+        var needle = normalizeExtractText(list[k]);
+        var at = text.indexOf(needle);
+        if (at > 0) amount = parseAmounts_(text.slice(0, at));
+      }
+      if (tail == null) {
+        var sharesSkip = false;
+        var s;
+        for (s = 0; s < skip.length; s++) {
+          if (squashExtract_(skip[s]) !== squashExtract_(list[k]) && phraseHits_(lines[i], skip[s])) sharesSkip = true;
+        }
+        if (sharesSkip) continue;
+        amount = parseAmounts_(lines[i]);
+        if (amount == null && i + 1 < lines.length) amount = parseAmounts_(lines[i + 1]);
+      }
+      if (amount != null) return amount;
+    }
+  }
+  return null;
 }
 
 function collectIdNumbers_(lines, config) {
@@ -202,8 +249,11 @@ function withoutMoney_(line) {
 /** Q-17, INV-44190. Amounts and 9-digit ids do not match. */
 function letterDocToken_(line) {
   var cleaned = withoutMoney_(stripDates_(line)).replace(/[–—−‐‑]/g, '-');
-  var match = /(?:^|[^A-Za-z0-9])([A-Z]+-?\d+)/i.exec(cleaned);
-  return match ? match[1] : null;
+  var forward = /(?:^|[^A-Za-z0-9])([A-Z]+-?\d+)/i.exec(cleaned);
+  if (forward) return forward[1];
+  var reversed = /(?:^|[^A-Za-z0-9])-?(\d+)-?([A-Z]+)(?![A-Za-z0-9])/i.exec(cleaned);
+  if (reversed) return reversed[2].toUpperCase() + '-' + reversed[1];
+  return null;
 }
 
 function numericDocToken_(line, ids) {

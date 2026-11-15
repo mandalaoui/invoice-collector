@@ -167,6 +167,13 @@ test('a quote number of letters, digits, and a dash is kept', () => {
   );
   assert.equal(amounts.doc_number, 'Q-17');
   assert.notEqual(amounts.doc_number, '400');
+
+  const reversed = extract.extractInvoice("מס' מסמך: -17Q\nהצעת מחיר\nסה\"כ לתשלום: 4,248.00", settings, {});
+  assert.equal(reversed.doc_number, 'Q-17');
+  const sharedLine = extract.extractInvoice('סה"כ לפני מע"מ: 100.00 מע"מ 18%: 18.00\nסה"כ לתשלום: 118.00', settings, {});
+  assert.equal(sharedLine.amount_before_vat, 100);
+  assert.equal(sharedLine.vat_amount, 18);
+  assert.equal(sharedLine.total, 118);
 });
 
 test('Hebrew quotes and מס׳ normalize before matching', () => {
