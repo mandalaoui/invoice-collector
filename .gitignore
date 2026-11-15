@@ -1,4 +1,5 @@
 node_modules/
+dist/
 
 # clasp OAuth tokens (the script id in .clasp.json is not a secret)
 .clasprc.json

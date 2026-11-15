@@ -2,6 +2,15 @@
 
 One Google Workspace user runs this inside the company account. Client names, ids, and emails stay in the Settings tab. The script does not send the accountant email. It only creates a Gmail draft.
 
+## Copy the code
+
+Use a browser profile that is signed in to the client account only. Another signed-in account can make Apps Script save and run as the wrong user.
+
+1. On the machine with this repo, run `npm run build:client`. It writes `dist/Code.gs` and `dist/appsscript.json`. Nothing under `src/dev` is included.
+2. In that browser profile, open script.google.com and create a project.
+3. Open `Code.gs`, replace all of it with `dist/Code.gs`, and save.
+4. **Project Settings → Show "appsscript.json" manifest file in editor.** Open `appsscript.json`, replace it with `dist/appsscript.json`, and save.
+
 ## Admin, once
 
 1. Admin console → **Apps → Google Workspace → Drive and Docs → Google Apps Script**. Turn Apps Script **on** for the people who will run it.
@@ -9,7 +18,7 @@ One Google Workspace user runs this inside the company account. Client names, id
 
 ## Advanced Drive service
 
-In the Apps Script editor, open **Services** (the plus next to Services) and add **Drive API**. Set the identifier to `Drive` and the version to **v2**. A project pushed from this repo already has that service in `appsscript.json`. Leave it on. The script uses it to read scans. It does not send files out of the company Drive.
+The pasted manifest already turns on the **Drive API**, version **v2**, identifier `Drive`. In the editor, open **Services** and confirm that line is there. The script uses it to read scans. It does not send files out of the company Drive.
 
 ## First run
 
