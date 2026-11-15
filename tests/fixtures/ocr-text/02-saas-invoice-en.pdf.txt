@@ -1,0 +1,14 @@
+Northwind Ledger Inc. 
+100 Demo Street, Wilmington, DE 19801, United States billing@northwind-ledger.example 
+Tax Invoice 
+Invoice No: INV-44190 
+Invoice date: 2026-11-03 
+Currency: USD 
+Bill to 
+Studio Dummy Ltd 
+49.00 Ledger Pro subscription, November 2026 
+Subtotal: USD 49.00 
+VAT: USD 0.00 
+Total due: USD 49.00 
+Foreign supplier. No Israeli VAT was charged. 
+Fictional software-test document. Names, IDs, and amounts are made up.

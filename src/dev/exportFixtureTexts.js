@@ -53,9 +53,13 @@ function exportFixtureTexts() {
     if (!matched || !fileByName[matched.name]) {
       Logger.log('exportFixtureTexts missing ' + fixture);
     } else {
-      var read = readDriveFileText(fileByName[matched.name]);
-      text = read && read.text ? read.text : '';
-      Logger.log('exportFixtureTexts %s source=%s', fixture, read ? read.source : '');
+      try {
+        var read = readDriveFileText(fileByName[matched.name]);
+        text = read && read.text ? read.text : '';
+        Logger.log('exportFixtureTexts %s source=%s', fixture, read ? read.source : '');
+      } catch (error) {
+        Logger.log('exportFixtureTexts %s error=%s', fixture, String(error && error.message ? error.message : error));
+      }
     }
     Logger.log(JSON.stringify({ fixture: fixture, text: text }));
     logged++;
