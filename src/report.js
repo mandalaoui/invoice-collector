@@ -1150,7 +1150,7 @@ function writeMonthlySummary(rows, month) {
  * NOT_INVOICE and DUPLICATE rows are not copied.
  * @return {{fileId: string, url: string, pages: number, name: string, originals: Array<Object>}}
  */
-function createMergedInvoicePdf(rows, month) {
+function createMergedInvoicePdf(rows, month, options) {
   var folderId = getConfig().invoices_folder_id;
   if (!folderId) throw new Error('invoices_folder_id is empty');
   var folder = DriveApp.getFolderById(folderId);
@@ -1179,7 +1179,7 @@ function createMergedInvoicePdf(rows, month) {
         throw new Error(original.getName() + ': ' + (error && error.message ? error.message : error));
       }
     }
-    var name = mergedPdfName(month);
+    var name = options && options.name ? String(options.name) : mergedPdfName(month);
     if (!pdfs.length) return { fileId: '', url: '', pages: 0, name: name, originals: before };
     var merged = mergePdfBytes(pdfs, names);
     var created = folder.createFile(Utilities.newBlob(toByteArray_(merged), 'application/pdf', name));
