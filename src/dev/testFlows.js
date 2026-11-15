@@ -104,7 +104,8 @@ function testAllSoFar() {
     runTaskCheck_('1.2', checkMonthFiles_),
     runTaskCheck_('1.3', checkSecondRun_),
     testResumeFlowResult_(),
-    testOcrResult_()
+    testOcrResult_(),
+    testExtractResult_()
   ];
   var summary = summarizeTaskResults_(rows);
   Logger.log('task\tresult\tdetail');
@@ -125,6 +126,12 @@ function testOcrResult_() {
   Logger.log('testAllSoFar step 2.1: testOcr');
   var ocr = testOcr();
   return { task: '2.1', result: ocr.result, detail: ocr.detail };
+}
+
+function testExtractResult_() {
+  Logger.log('testAllSoFar step 2.2: testExtract');
+  var extracted = testExtract();
+  return { task: '2.2', result: extracted.result, detail: extracted.detail };
 }
 
 function runTaskCheck_(task, check) {

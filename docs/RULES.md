@@ -17,7 +17,7 @@
 Check longest match first.
 
 ## Total
-- Keywords (priority order): `סה"כ לתשלום`, `סכום לתשלום`, `סה"כ כולל מע"מ`, `סה"כ`, `Total due`, `Amount due`, `Total`.
+- Keywords (priority order): `סה"כ לתשלום`, `סכום לתשלום`, `סה"כ כולל מע"מ`, `סה"כ לזיכוי`, `סה"כ`, `Total due`, `Amount due`, `Total`.
 - Take the number on the same line or the next line. If several, prefer the largest near the keyword.
 
 ## Before VAT / VAT
@@ -30,7 +30,7 @@ Check longest match first.
 - Prefer near `תאריך`, `תאריך הפקה`, `Date`, `Invoice date`. Must fall in or near the target month.
 
 ## Document number
-- Near `מס' חשבונית`, `חשבונית מס מספר`, `מספר מסמך`, `Invoice #`, `Invoice No`.
+- Near `מס' חשבונית`, `חשבונית מס מספר`, `מספר מסמך`, `מס' מסמך`, `קבלה מספר`, `Invoice #`, `Invoice No`.
 
 ## Vendor ID
 - `ח.פ`, `ע.מ`, `עוסק מורשה`, `ח"פ` followed by 9 digits. Exclude the company's own ID (from Settings).

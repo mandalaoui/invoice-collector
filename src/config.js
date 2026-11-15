@@ -117,6 +117,7 @@ var SETTINGS_FIELDS = [
       'סה"כ לתשלום',
       'סכום לתשלום',
       'סה"כ כולל מע"מ',
+      'סה"כ לזיכוי',
       'סה"כ',
       'Total due',
       'Amount due',
@@ -145,7 +146,7 @@ var SETTINGS_FIELDS = [
   },
   {
     key: 'keywords_doc_number',
-    value: ['מס\' חשבונית', 'חשבונית מס מספר', 'מספר מסמך', 'Invoice #', 'Invoice No'].join('\n'),
+    value: ['מס\' חשבונית', 'חשבונית מס מספר', 'מספר מסמך', 'מס\' מסמך', 'קבלה מספר', 'Invoice #', 'Invoice No'].join('\n'),
     type: 'lines',
     note: 'Source: docs/RULES.md.'
   },
