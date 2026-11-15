@@ -12,7 +12,7 @@
 - [x] 1.4 `RunLog` + batching for the 6-minute limit. Done when: run logs counts and resumes. ✅
 
 ## Phase 2 — Text + extraction
-- [ ] 2.1 `ocr.js`: text layer first, Drive OCR fallback (Hebrew). Done when: text returned for all fixture types.
+- [x] 2.1 `ocr.js`: text layer first, Drive OCR fallback (Hebrew). Done when: text returned for all fixture types. ✅
 - [ ] 2.2 `extract.js` (pure): total, date, doc_number, vendor_id, VAT, doc_type, allocation_number + confidence. Done when: unit tests pass on fixtures.
 - [ ] 2.3 Validation rules + statuses. Done when: bad samples get REVIEW with a reason.
 - [ ] 2.4 Write rows to `Invoices`. Done when: sheet filled for test month.
