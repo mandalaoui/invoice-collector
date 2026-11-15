@@ -103,10 +103,8 @@ test('OCR is only offered for PDFs and images', () => {
   assert.match(html.text, /1,770/);
 });
 
-test('a JPEG is OCR’d once, then the temp Doc is deleted', () => {
-  const inserts = [];
-  let trashed = '';
-  const blob = {
+function jpegBlob() {
+  return {
     contentType: 'application/vnd.google-apps.document',
     setContentType(type) {
       this.contentType = type;
@@ -119,6 +117,12 @@ test('a JPEG is OCR’d once, then the temp Doc is deleted', () => {
       return [1, 2, 3];
     }
   };
+}
+
+test('a JPEG is OCR’d with Docs mime type and Hebrew iw, then the temp Doc is deleted', () => {
+  const inserts = [];
+  let trashed = '';
+  global.MimeType = { GOOGLE_DOCS: 'application/vnd.google-apps.document' };
   global.Drive = {
     Files: {
       insert(resource, media, options) {
@@ -134,7 +138,6 @@ test('a JPEG is OCR’d once, then the temp Doc is deleted', () => {
     }
   };
   global.DriveApp = {
-    getRootFolder: () => ({ getId: () => 'root' }),
     getFileById(id) {
       return { setTrashed: () => { trashed = id; } };
     }
@@ -143,17 +146,64 @@ test('a JPEG is OCR’d once, then the temp Doc is deleted', () => {
     const read = ocr.readDriveFileText({
       getName: () => '05-photo-receipt.jpg',
       getMimeType: () => 'image/jpeg',
-      getBlob: () => blob
+      getBlob: jpegBlob
     });
     assert.equal(inserts.length, 1);
-    assert.deepEqual(inserts[0].options, { convert: true, ocr: true, ocrLanguage: 'he' });
-    assert.equal(inserts[0].resource.mimeType, undefined);
-    assert.equal(inserts[0].resource.parents[0].id, 'root');
+    assert.equal(inserts[0].resource.title, 'invoice-collector-text');
+    assert.equal(inserts[0].resource.mimeType, MimeType.GOOGLE_DOCS);
+    assert.deepEqual(inserts[0].options, { ocr: true, ocrLanguage: 'iw' });
     assert.equal(inserts[0].media.contentType, 'image/jpeg');
     assert.equal(read.source, 'ocr');
     assert.match(read.text, /3188/);
     assert.equal(trashed, 'temp-doc');
   } finally {
+    delete global.MimeType;
+    delete global.Drive;
+    delete global.DocumentApp;
+    delete global.DriveApp;
+  }
+});
+
+test('a rejected OCR language is retried without ocrLanguage and the request is logged', () => {
+  const inserts = [];
+  const logs = [];
+  global.MimeType = { GOOGLE_DOCS: 'application/vnd.google-apps.document' };
+  global.Logger = { log(message) { logs.push(message); } };
+  global.Drive = {
+    Files: {
+      insert(resource, media, options) {
+        inserts.push({ resource, options, contentType: media.contentType });
+        if (options.ocrLanguage) throw new Error('drive.files.insert: Invalid Value');
+        return { id: 'temp-doc' };
+      }
+    }
+  };
+  global.DocumentApp = {
+    openById() {
+      return { getBody: () => ({ getText: () => '3188' }) };
+    }
+  };
+  global.DriveApp = {
+    getFileById() {
+      return { setTrashed() {} };
+    }
+  };
+  try {
+    const read = ocr.readDriveFileText({
+      getName: () => '05-photo-receipt.jpg',
+      getMimeType: () => 'image/jpeg',
+      getBlob: jpegBlob
+    });
+    assert.equal(read.source, 'ocr');
+    assert.deepEqual(inserts[0].options, { ocr: true, ocrLanguage: 'iw' });
+    assert.deepEqual(inserts[1].options, { ocr: true });
+    assert.equal(inserts[1].resource.mimeType, 'application/vnd.google-apps.document');
+    assert.match(logs[0], /ocrLanguage/);
+    assert.match(logs[0], /Invalid Value/);
+    assert.match(logs[0], /image\/jpeg|application\/vnd.google-apps.document/);
+  } finally {
+    delete global.MimeType;
+    delete global.Logger;
     delete global.Drive;
     delete global.DocumentApp;
     delete global.DriveApp;

@@ -216,6 +216,46 @@ function buildFixtureInvoiceRows() {
   return { rows: rows, maps: maps };
 }
 
+/**
+ * Sheet row numbers (1-based, header is row 1) of the fixture rows, bottom first.
+ * Other invoice rows are left in place.
+ */
+function fixtureSheetRowsToClear_(values, sourceCol, fixtures) {
+  var stems = [];
+  var docs = fixtures || [];
+  var i;
+  for (i = 0; i < docs.length; i++) stems.push(fixtureStem_(docs[i].file || docs[i]));
+  var numbers = [];
+  var grid = values || [];
+  for (var r = 1; r < grid.length; r++) {
+    var source = String(grid[r][sourceCol] || '');
+    for (i = 0; i < stems.length; i++) {
+      if (stems[i] && source.indexOf(stems[i]) >= 0) {
+        numbers.push(r + 1);
+        break;
+      }
+    }
+  }
+  numbers.sort(function (a, b) { return b - a; });
+  return numbers;
+}
+
+/** Dev only. Removes the eight fixture rows so testPhase2 extracts them again. */
+function clearFixtureInvoiceRows_() {
+  var sheet = invoiceSheet_();
+  var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return 0;
+  var sourceCol = 0;
+  var c;
+  for (c = 0; c < values[0].length; c++) {
+    if (String(values[0][c]) === 'source') sourceCol = c;
+  }
+  var numbers = fixtureSheetRowsToClear_(values, sourceCol, FIXTURE_EXPECTED.documents);
+  for (var i = 0; i < numbers.length; i++) sheet.deleteRow(numbers[i]);
+  Logger.log('testPhase2 cleared %s fixture rows', numbers.length);
+  return numbers.length;
+}
+
 function testInvoices() {
   var detail = '';
   var pass = false;
@@ -320,11 +360,14 @@ function scoreFixtureInvoices_() {
  * miss is REVIEW.
  */
 function testPhase2() {
-  var invoices = testInvoices();
+  var invoices = { result: 'FAIL', detail: '', maps: [] };
   var score = { correct: 0, total: 0, missStatuses: [], lines: [] };
   var pass = false;
-  var detail = invoices.detail;
+  var detail = '';
   try {
+    clearFixtureInvoiceRows_();
+    invoices = testInvoices();
+    detail = invoices.detail;
     var maps = invoices.maps || [];
     Logger.log('fixture\tname\tmimeType');
     var m;
@@ -358,6 +401,7 @@ if (typeof module !== 'undefined') {
     mapFixturesToDriveFiles: mapFixturesToDriveFiles,
     formatFixtureDriveFile_: formatFixtureDriveFile_,
     readFixtureFiles: readFixtureFiles,
-    readFailureFields: readFailureFields
+    readFailureFields: readFailureFields,
+    fixtureSheetRowsToClear_: fixtureSheetRowsToClear_
   };
 }

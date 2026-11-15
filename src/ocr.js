@@ -526,9 +526,23 @@ function readDocumentText(input) {
   return { text: '', source: 'empty' };
 }
 
+function googleDocsMime_() {
+  if (typeof MimeType !== 'undefined' && MimeType.GOOGLE_DOCS) return MimeType.GOOGLE_DOCS;
+  return 'application/vnd.google-apps.document';
+}
+
+function ocrInsertFailed_(resource, options, error) {
+  var detail = 'drive.files.insert resource=' + JSON.stringify(resource) +
+    ' options=' + JSON.stringify(options) +
+    ' error=' + String(error && error.message ? error.message : error);
+  if (typeof Logger !== 'undefined' && Logger.log) Logger.log(detail);
+  return new Error(detail);
+}
+
 /**
- * One insert of the image or PDF bytes. OCR options stay on that upload.
- * The resource is not a Google Doc; Drive creates the Doc because convert is true.
+ * Drive v2: resource {title, mimeType: MimeType.GOOGLE_DOCS}, image/PDF blob,
+ * optional args {ocr: true, ocrLanguage: 'iw'}. A rejected language is retried
+ * with ocr only. The temp Doc is read and trashed.
  */
 function driveOcrText_(blob, mime, name) {
   var uploadType = mimeBase_(mime);
@@ -539,16 +553,21 @@ function driveOcrText_(blob, mime, name) {
     throw new Error('Enable the Drive advanced service (Drive API v2). It is required for OCR.');
   }
   var media = blob && blob.setContentType ? blob.setContentType(uploadType) : blob;
+  var resource = { title: TEMP_OCR_TITLE, mimeType: googleDocsMime_() };
+  var withLanguage = { ocr: true, ocrLanguage: 'iw' };
   var created = null;
   try {
-    created = Drive.Files.insert(
-      {
-        title: TEMP_OCR_TITLE,
-        parents: [{ id: DriveApp.getRootFolder().getId() }]
-      },
-      media,
-      { convert: true, ocr: true, ocrLanguage: 'he' }
-    );
+    try {
+      created = Drive.Files.insert(resource, media, withLanguage);
+    } catch (error) {
+      ocrInsertFailed_(resource, withLanguage, error);
+      var ocrOnly = { ocr: true };
+      try {
+        created = Drive.Files.insert(resource, media, ocrOnly);
+      } catch (again) {
+        throw ocrInsertFailed_(resource, ocrOnly, again);
+      }
+    }
     return DocumentApp.openById(created.id).getBody().getText();
   } finally {
     if (created && created.id) DriveApp.getFileById(created.id).setTrashed(true);
