@@ -332,9 +332,75 @@ function extractInvoice(text, config, context) {
   return fields;
 }
 
+function moneyClose_(left, right, tolerance) {
+  var tol = Number(tolerance);
+  if (!isFinite(tol)) tol = 1;
+  return Math.abs(left - right) <= tol;
+}
+
+/**
+ * @param {Object} fields extractInvoice() result
+ * @param {Object} config
+ * @param {Array<Object>=} existing rows already stored; same vendor_id + doc_number is a duplicate
+ * @return {{status: string, reasons: string[]}}
+ */
+function classifyInvoice(fields, config, existing) {
+  var settings = config || {};
+  var doc = fields || {};
+  var reasons = [];
+  if (doc.doc_type === 'not_invoice') {
+    return { status: 'NOT_INVOICE', reasons: ['not an invoice'] };
+  }
+  if (duplicateInvoice_(doc, existing)) {
+    return { status: 'DUPLICATE', reasons: ['same vendor id and document number'] };
+  }
+  if (!doc.doc_type) reasons.push('document type was not found');
+  var before = doc.amount_before_vat;
+  var vat = doc.vat_amount;
+  var total = doc.total;
+  var rate = Number(settings.vat_rate);
+  if (!isFinite(rate)) rate = 0.18;
+  if (before != null && vat != null && total != null) {
+    if (!moneyClose_(before + vat, total, settings.amount_tolerance)) {
+      reasons.push('total does not equal amount before VAT plus VAT');
+    }
+    if (!moneyClose_(Math.abs(vat), Math.abs(before) * rate, settings.amount_tolerance)) {
+      reasons.push('VAT is not the configured rate');
+    }
+  } else if (total != null && (before == null || vat == null)) {
+    reasons.push('VAT breakdown was not found');
+  } else if (total == null) {
+    reasons.push('total was not found');
+  }
+  if (doc.doc_type === 'receipt') reasons.push('not valid for VAT deduction alone');
+  var allocationAt = settings.allocation_threshold;
+  var taxable = doc.doc_type === 'tax_invoice' || doc.doc_type === 'tax_invoice_receipt';
+  if (allocationAt != null && total != null && taxable && Math.abs(total) >= Number(allocationAt) && !doc.allocation_number) {
+    reasons.push('missing allocation number');
+  }
+  var minimum = Number(settings.confidence_threshold);
+  if (!isFinite(minimum)) minimum = 0.7;
+  if (!(Number(doc.confidence) >= minimum)) reasons.push('low confidence');
+  if (reasons.length) return { status: 'REVIEW', reasons: reasons };
+  return { status: 'OK', reasons: [] };
+}
+
+function duplicateInvoice_(fields, existing) {
+  if (!fields || !fields.vendor_id || !fields.doc_number) return false;
+  var rows = existing || [];
+  for (var i = 0; i < rows.length; i++) {
+    if (!rows[i]) continue;
+    if (String(rows[i].vendor_id || '') === String(fields.vendor_id) && String(rows[i].doc_number || '') === String(fields.doc_number)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 if (typeof module !== 'undefined') {
   module.exports = {
     normalizeExtractText: normalizeExtractText,
-    extractInvoice: extractInvoice
+    extractInvoice: extractInvoice,
+    classifyInvoice: classifyInvoice
   };
 }

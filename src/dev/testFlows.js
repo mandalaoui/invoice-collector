@@ -105,7 +105,8 @@ function testAllSoFar() {
     runTaskCheck_('1.3', checkSecondRun_),
     testResumeFlowResult_(),
     testOcrResult_(),
-    testExtractResult_()
+    testExtractResult_(),
+    testValidationResult_()
   ];
   var summary = summarizeTaskResults_(rows);
   Logger.log('task\tresult\tdetail');
@@ -132,6 +133,12 @@ function testExtractResult_() {
   Logger.log('testAllSoFar step 2.2: testExtract');
   var extracted = testExtract();
   return { task: '2.2', result: extracted.result, detail: extracted.detail };
+}
+
+function testValidationResult_() {
+  Logger.log('testAllSoFar step 2.3: testValidation');
+  var validation = testValidation();
+  return { task: '2.3', result: validation.result, detail: validation.detail };
 }
 
 function runTaskCheck_(task, check) {

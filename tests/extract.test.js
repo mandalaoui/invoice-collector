@@ -78,6 +78,53 @@ test('extractInvoice matches expected.json on all eight fixtures', () => {
   }
 });
 
+test('statuses flag bad samples and leave consistent tax invoices OK', () => {
+  const settings = fixtureConfig();
+  const byFile = {};
+  for (const doc of expected.documents) {
+    const fields = extract.extractInvoice(textFor(doc), settings, {
+      senderEmail: doc.email.reply_to,
+      senderName: doc.email.from_name
+    });
+    byFile[doc.file] = extract.classifyInvoice(fields, settings, []);
+  }
+  assert.equal(byFile['01-tax-invoice-receipt-he.pdf'].status, 'OK');
+  assert.equal(byFile['03-tax-invoice-allocation-he.pdf'].status, 'OK');
+  assert.equal(byFile['06-email-body-invoice.html'].status, 'OK');
+  assert.equal(byFile['07-credit-note-he.pdf'].status, 'OK');
+  assert.equal(byFile['08-quote-not-invoice-he.pdf'].status, 'NOT_INVOICE');
+  for (const file of ['02-saas-invoice-en.pdf', '04-scanned-receipt-he.pdf', '05-photo-receipt.jpg']) {
+    assert.equal(byFile[file].status, 'REVIEW', file);
+    assert.ok(byFile[file].reasons.length > 0, file);
+  }
+  assert.ok(byFile['02-saas-invoice-en.pdf'].reasons.some((reason) => /rate/i.test(reason)));
+  assert.ok(byFile['05-photo-receipt.jpg'].reasons.some((reason) => /VAT deduction/i.test(reason)));
+
+  const coffee = extract.extractInvoice(textFor(expected.documents[0]), settings, {});
+  const duplicate = extract.classifyInvoice(coffee, settings, [coffee]);
+  assert.equal(duplicate.status, 'DUPLICATE');
+  assert.match(duplicate.reasons[0], /vendor id/i);
+
+  const broken = extract.classifyInvoice(
+    {
+      doc_type: 'tax_invoice',
+      vendor_id: '990100018',
+      doc_number: '1',
+      doc_date: '02/11/2026',
+      amount_before_vat: 100,
+      vat_amount: 18,
+      total: 200,
+      confidence: 0.9,
+      allocation_number: null
+    },
+    Object.assign({}, settings, { allocation_threshold: 50 }),
+    []
+  );
+  assert.equal(broken.status, 'REVIEW');
+  assert.ok(broken.reasons.some((reason) => /total does not equal/i.test(reason)));
+  assert.ok(broken.reasons.some((reason) => /allocation/i.test(reason)));
+});
+
 test('Hebrew quotes and מס׳ normalize before matching', () => {
   assert.equal(extract.normalizeExtractText('מס׳ 10482'), 'מספר 10482');
   assert.equal(extract.normalizeExtractText('סה״כ'), 'סה"כ');
