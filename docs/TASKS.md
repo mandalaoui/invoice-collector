@@ -32,5 +32,8 @@
 - [ ] 5.2 `worker/` Python: pull queue, Tesseract/Ollama Qwen3-VL extract JSON, write back + tokens.
 - [ ] 5.3 `compare` mode + `Comparison` sheet (accuracy, time, tokens, manual work).
 
-## Phase 6 — Reuse
-- [ ] 6.1 Make everything client-agnostic (all client data in Settings). Write a 1-page install guide.
+## Phase 6 — First install
+- [x] 6.1 `install()`: sheet tabs, Settings defaults, Gmail labels, Drive folder. Idempotent. Asks only for owner and accountant emails. ✅
+- [ ] 6.2 Sheet menu: Install / Run this month / Test run (draft to me) / trigger on / off. Test run is a limited batch and never sends.
+- [ ] 6.3 `docs/INSTALL.md` for a Workspace user, including admin checks and the Advanced Drive service.
+- [ ] 6.4 Production `clasp push` excludes `src/dev`. `testPhase6` covers the menu, a second install, and a self-addressed draft.
