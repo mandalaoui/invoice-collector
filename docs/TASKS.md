@@ -19,7 +19,7 @@
 
 ## Phase 3 — Real month (tuning)
 - [ ] 3.1 Fill `AnswerKey` manually for last month.
-- [ ] 3.2 Accuracy report: compare `Invoices` vs `AnswerKey` per field. Done when: % per field shown.
+- [x] 3.2 Accuracy report: compare `Invoices` vs `AnswerKey` per field. Done when: % per field shown. ✅
 - [ ] 3.3 Improve rules in `RULES.md`/Settings until MVP criteria met.
 
 ## Phase 4 — Output

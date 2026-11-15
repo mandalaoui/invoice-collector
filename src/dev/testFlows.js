@@ -107,7 +107,8 @@ function testAllSoFar() {
     testOcrResult_(),
     testExtractResult_(),
     testValidationResult_(),
-    testPhase2Result_()
+    testPhase2Result_(),
+    testAccuracyResult_()
   ];
   var summary = summarizeTaskResults_(rows);
   Logger.log('task\tresult\tdetail');
@@ -146,6 +147,12 @@ function testPhase2Result_() {
   Logger.log('testAllSoFar step 2.4: testPhase2');
   var phase = testPhase2();
   return { task: '2.4', result: phase.result, detail: phase.detail };
+}
+
+function testAccuracyResult_() {
+  Logger.log('testAllSoFar step 3.2: testAccuracy');
+  var accuracy = testAccuracy();
+  return { task: '3.2', result: accuracy.result, detail: accuracy.detail };
 }
 
 function runTaskCheck_(task, check) {

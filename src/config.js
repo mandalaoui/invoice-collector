@@ -45,7 +45,8 @@ var COMPARISON_HEADERS = [
   'local_ai_matches',
   'time_ms',
   'tokens',
-  'manual_count'
+  'manual_count',
+  'match_percent'
 ];
 
 var ANSWER_KEY_HEADERS = INVOICE_HEADERS.slice();
