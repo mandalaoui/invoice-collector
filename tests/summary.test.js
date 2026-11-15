@@ -1,7 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const zlib = require('node:zlib');
+const { execFileSync } = require('node:child_process');
 const report = require('../src/report.js');
 
 const fixturesDir = path.join(__dirname, 'fixtures');
@@ -71,6 +74,35 @@ test('an undated row stays in the month and a second summary replaces the first'
   assert.equal(metrics.length, 1);
   assert.equal(twice[0][0], 'field');
   assert.equal(report.mergedPdfName('2026-11'), '2026-11_merged.pdf');
+});
+
+test('flate streams and a compressed xref still merge', () => {
+  const sample = Buffer.from('Invoice Collector fixture ' + 'page '.repeat(40));
+  assert.deepEqual(Buffer.from(report.inflateZlib_(zlib.deflateSync(sample))), sample);
+  const raw = [];
+  for (let i = 0; i < 12; i++) raw.push(i * 3);
+  const filtered = [];
+  let prev = [0, 0, 0];
+  for (let row = 0; row < 4; row++) {
+    filtered.push(2);
+    const current = raw.slice(row * 3, row * 3 + 3);
+    for (let col = 0; col < 3; col++) filtered.push((current[col] - prev[col]) & 255);
+    prev = current;
+  }
+  assert.deepEqual(report.pngUnpredict_(filtered, 3, 12), raw);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'invoice-xref-'));
+  const out = path.join(dir, 'xref.pdf');
+  execFileSync('python', ['-c', [
+    'import fitz',
+    'doc = fitz.open(r"' + path.join(fixturesDir, '02-saas-invoice-en.pdf').replace(/\\/g, '/') + '")',
+    'doc.save(r"' + out.replace(/\\/g, '/') + '", garbage=4, deflate=True, use_objstms=1)'
+  ].join('\n')]);
+  const compressed = fs.readFileSync(out);
+  assert.equal(report.pdfPageCount(compressed), 1);
+  const classic = fs.readFileSync(path.join(fixturesDir, '01-tax-invoice-receipt-he.pdf'));
+  const merged = Buffer.from(report.mergePdfBytes([classic, compressed], ['classic.pdf', 'xref.pdf']));
+  assert.equal(report.pdfPageCount(merged), 2);
 });
 
 test('merged pdf is built from copies of the fixture bytes', () => {

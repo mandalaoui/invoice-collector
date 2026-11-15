@@ -434,20 +434,265 @@ function refsInArray_(dict, key) {
   return refs;
 }
 
-function readPdfObject_(text, offset) {
-  var head = text.slice(offset).match(/^(\d+)\s+(\d+)\s+obj\s*/);
+function reverseBits_(code, length) {
+  var out = 0;
+  for (var i = 0; i < length; i++) {
+    out = (out << 1) | (code & 1);
+    code >>>= 1;
+  }
+  return out;
+}
+
+function huffman_(lengths) {
+  var counts = [];
+  var max = 0;
+  var i;
+  for (i = 0; i < lengths.length; i++) {
+    var len = lengths[i] || 0;
+    if (!len) continue;
+    counts[len] = (counts[len] || 0) + 1;
+    if (len > max) max = len;
+  }
+  if (!max) return { table: [], max: 0 };
+  var next = [];
+  var code = 0;
+  for (var bits = 1; bits <= max; bits++) {
+    code = (code + (counts[bits - 1] || 0)) << 1;
+    next[bits] = code;
+  }
+  var table = new Array(1 << max);
+  for (var sym = 0; sym < lengths.length; sym++) {
+    var length = lengths[sym] || 0;
+    if (!length) continue;
+    var reversed = reverseBits_(next[length]++, length);
+    var step = 1 << length;
+    for (var fill = reversed; fill < table.length; fill += step) table[fill] = { sym: sym, len: length };
+  }
+  return { table: table, max: max };
+}
+
+function BitReader_(data) {
+  this.data = data;
+  this.i = 0;
+  this.bit = 0;
+  this.acc = 0;
+}
+
+BitReader_.prototype.pull = function (n) {
+  while (this.bit < n) {
+    if (this.i >= this.data.length) throw new Error('pdf flate ended early');
+    this.acc |= this.data[this.i++] << this.bit;
+    this.bit += 8;
+  }
+  var value = this.acc & ((1 << n) - 1);
+  this.acc >>>= n;
+  this.bit -= n;
+  return value;
+};
+
+BitReader_.prototype.align = function () {
+  this.bit = 0;
+  this.acc = 0;
+};
+
+function decodeSymbol_(reader, huff) {
+  if (!huff.max) throw new Error('pdf flate huffman is empty');
+  while (reader.bit < huff.max && reader.i < reader.data.length) {
+    reader.acc |= reader.data[reader.i++] << reader.bit;
+    reader.bit += 8;
+  }
+  var found = huff.table[reader.acc & ((1 << huff.max) - 1)];
+  if (!found) throw new Error('pdf flate symbol was not found');
+  reader.acc >>>= found.len;
+  reader.bit -= found.len;
+  return found.sym;
+}
+
+var FLATE_LEN_BASE_ = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
+var FLATE_LEN_EXTRA_ = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+var FLATE_DIST_BASE_ = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
+var FLATE_DIST_EXTRA_ = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+var FLATE_CLEN_ORDER_ = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+
+function fixedLitTree_() {
+  if (fixedLitTree_.cached) return fixedLitTree_.cached;
+  var lengths = [];
+  var i;
+  for (i = 0; i <= 143; i++) lengths.push(8);
+  for (i = 144; i <= 255; i++) lengths.push(9);
+  for (i = 256; i <= 279; i++) lengths.push(7);
+  for (i = 280; i <= 287; i++) lengths.push(8);
+  fixedLitTree_.cached = huffman_(lengths);
+  return fixedLitTree_.cached;
+}
+
+function fixedDistTree_() {
+  if (fixedDistTree_.cached) return fixedDistTree_.cached;
+  var lengths = [];
+  for (var i = 0; i < 32; i++) lengths.push(5);
+  fixedDistTree_.cached = huffman_(lengths);
+  return fixedDistTree_.cached;
+}
+
+function dynamicTrees_(reader) {
+  var hlit = reader.pull(5) + 257;
+  var hdist = reader.pull(5) + 1;
+  var hclen = reader.pull(4) + 4;
+  var clens = [];
+  var i;
+  for (i = 0; i < 19; i++) clens.push(0);
+  for (i = 0; i < hclen; i++) clens[FLATE_CLEN_ORDER_[i]] = reader.pull(3);
+  var clenTree = huffman_(clens);
+  var lengths = [];
+  while (lengths.length < hlit + hdist) {
+    var sym = decodeSymbol_(reader, clenTree);
+    if (sym < 16) lengths.push(sym);
+    else if (sym === 16) {
+      var prev = lengths.length ? lengths[lengths.length - 1] : 0;
+      var repeat = reader.pull(2) + 3;
+      for (i = 0; i < repeat; i++) lengths.push(prev);
+    } else if (sym === 17) {
+      var zeros = reader.pull(3) + 3;
+      for (i = 0; i < zeros; i++) lengths.push(0);
+    } else if (sym === 18) {
+      var more = reader.pull(7) + 11;
+      for (i = 0; i < more; i++) lengths.push(0);
+    } else throw new Error('pdf flate code length is invalid');
+  }
+  return { lit: huffman_(lengths.slice(0, hlit)), dist: huffman_(lengths.slice(hlit, hlit + hdist)) };
+}
+
+function inflateBlock_(reader, output, lit, dist) {
+  while (true) {
+    var sym = decodeSymbol_(reader, lit);
+    if (sym < 256) {
+      output.push(sym);
+      continue;
+    }
+    if (sym === 256) return;
+    var length = FLATE_LEN_BASE_[sym - 257] + (FLATE_LEN_EXTRA_[sym - 257] ? reader.pull(FLATE_LEN_EXTRA_[sym - 257]) : 0);
+    var dsym = decodeSymbol_(reader, dist);
+    var distance = FLATE_DIST_BASE_[dsym] + (FLATE_DIST_EXTRA_[dsym] ? reader.pull(FLATE_DIST_EXTRA_[dsym]) : 0);
+    if (!distance || distance > output.length) throw new Error('pdf flate distance is invalid');
+    for (var n = 0; n < length; n++) output.push(output[output.length - distance]);
+  }
+}
+
+function inflateRaw_(data) {
+  var reader = new BitReader_(data);
+  var output = [];
+  while (true) {
+    var bfinal = reader.pull(1);
+    var btype = reader.pull(2);
+    if (btype === 0) {
+      reader.align();
+      if (reader.i + 4 > reader.data.length) throw new Error('pdf flate ended early');
+      var len = reader.data[reader.i] | (reader.data[reader.i + 1] << 8);
+      var nlen = reader.data[reader.i + 2] | (reader.data[reader.i + 3] << 8);
+      if ((len ^ 0xffff) !== nlen) throw new Error('pdf stored block length mismatch');
+      reader.i += 4;
+      for (var s = 0; s < len; s++) output.push(reader.data[reader.i++]);
+    } else if (btype === 1) inflateBlock_(reader, output, fixedLitTree_(), fixedDistTree_());
+    else if (btype === 2) {
+      var trees = dynamicTrees_(reader);
+      inflateBlock_(reader, output, trees.lit, trees.dist);
+    } else throw new Error('pdf flate block type is invalid');
+    if (bfinal) break;
+  }
+  reader.align();
+  return { output: output, offset: reader.i };
+}
+
+function adler32_(bytes) {
+  var a = 1;
+  var b = 0;
+  for (var i = 0; i < bytes.length; i++) {
+    a = (a + bytes[i]) % 65521;
+    b = (b + a) % 65521;
+  }
+  return ((b << 16) | a) >>> 0;
+}
+
+/** Inflate a PDF FlateDecode stream (zlib wrapper). */
+function inflateZlib_(bytes) {
+  var data = toByteArray_(bytes);
+  if (data.length < 6) throw new Error('pdf flate stream is empty');
+  var cmf = data[0];
+  var flg = data[1];
+  if ((cmf & 15) !== 8 || ((cmf << 8) + flg) % 31 !== 0) throw new Error('pdf flate header is invalid');
+  if (flg & 32) throw new Error('pdf flate preset dictionary is not supported');
+  var raw = inflateRaw_(data.slice(2));
+  if (raw.offset + 4 > data.length) throw new Error('pdf flate checksum is missing');
+  var expect = 0;
+  for (var i = 0; i < 4; i++) expect = (expect << 8) + data[2 + raw.offset + i];
+  if ((expect >>> 0) !== adler32_(raw.output)) throw new Error('pdf flate checksum failed');
+  return raw.output;
+}
+
+function paeth_(left, up, upLeft) {
+  var estimate = left + up - upLeft;
+  var pa = Math.abs(estimate - left);
+  var pb = Math.abs(estimate - up);
+  var pc = Math.abs(estimate - upLeft);
+  if (pa <= pb && pa <= pc) return left;
+  if (pb <= pc) return up;
+  return upLeft;
+}
+
+/** Undo a PDF PNG predictor. columns is the sample width, without the filter byte. */
+function pngUnpredict_(bytes, columns, predictor) {
+  var data = toByteArray_(bytes);
+  var pred = Number(predictor) || 1;
+  if (pred === 1) return data;
+  var rowSize = columns + 1;
+  if (!columns || data.length % rowSize !== 0) throw new Error('pdf predictor row is invalid');
+  var out = [];
+  var prev = [];
+  var c;
+  for (c = 0; c < columns; c++) prev.push(0);
+  for (var at = 0; at < data.length; at += rowSize) {
+    var filter = data[at];
+    if (pred >= 10 && pred <= 14) filter = pred - 10;
+    var row = [];
+    for (c = 0; c < columns; c++) {
+      var left = c ? row[c - 1] : 0;
+      var up = prev[c];
+      var upLeft = c ? prev[c - 1] : 0;
+      var value = data[at + 1 + c];
+      if (filter === 1) value = (value + left) & 255;
+      else if (filter === 2) value = (value + up) & 255;
+      else if (filter === 3) value = (value + ((left + up) >> 1)) & 255;
+      else if (filter === 4) value = (value + paeth_(left, up, upLeft)) & 255;
+      else if (filter !== 0) throw new Error('pdf predictor ' + filter + ' is not supported');
+      row.push(value);
+    }
+    for (c = 0; c < row.length; c++) out.push(row[c]);
+    prev = row;
+  }
+  return out;
+}
+
+function readPdfObject_(text, offset, lengthOf) {
+  var slice = text.slice(offset);
+  var skipped = slice.match(/^[\s\0]*/);
+  var start = skipped && skipped[0].length <= 32 ? skipped[0].length : 0;
+  var head = slice.slice(start).match(/^(\d+)\s+(\d+)\s+obj\s*/);
   if (!head) throw new Error('bad pdf object at ' + offset);
-  var bodyAt = offset + head[0].length;
-  var preview = text.slice(bodyAt, bodyAt + 4000);
+  var bodyAt = offset + start + head[0].length;
+  var preview = text.slice(bodyAt, bodyAt + 8000);
   var streamAt = preview.indexOf('stream');
   var endEarly = preview.indexOf('endobj');
   if (streamAt >= 0 && (endEarly === -1 || streamAt < endEarly)) {
-    var lengthMatch = preview.slice(0, streamAt).match(/\/Length\s+(\d+)/);
-    if (!lengthMatch) throw new Error('pdf stream length is not a direct number');
+    var dict = preview.slice(0, streamAt);
+    var directLength = dict.match(/\/Length\s+(\d+)(?!\s+\d+\s+R)/);
+    var indirectLength = dict.match(/\/Length\s+(\d+)\s+\d+\s+R/);
+    var length = directLength ? Number(directLength[1]) : null;
+    if (length == null && indirectLength && lengthOf) length = lengthOf(Number(indirectLength[1]));
+    if (length == null) throw new Error('pdf stream length is not a direct number');
     var dataAt = bodyAt + streamAt + 'stream'.length;
     if (text.charCodeAt(dataAt) === 13) dataAt++;
     if (text.charCodeAt(dataAt) === 10) dataAt++;
-    var after = dataAt + Number(lengthMatch[1]);
+    var after = dataAt + length;
     if (!/^\s*endstream/.test(text.slice(after, after + 30))) throw new Error('pdf stream did not end');
     var endObj = text.indexOf('endobj', after);
     if (endObj < 0) throw new Error('pdf object did not end');
@@ -458,17 +703,49 @@ function readPdfObject_(text, offset) {
   return { num: Number(head[1]), body: text.slice(bodyAt, endObjPlain).replace(/\s*$/, '') };
 }
 
-function parseClassicPdf_(bytes) {
-  var text = bytesToLatin1_(bytes);
-  var marker = text.lastIndexOf('startxref');
-  if (marker < 0) throw new Error('pdf has no startxref');
-  var offsetMatch = text.slice(marker + 9).match(/\d+/);
-  if (!offsetMatch) throw new Error('pdf startxref is empty');
-  var offset = Number(offsetMatch[0]);
-  if (text.slice(offset, offset + 4) !== 'xref') throw new Error('pdf xref is compressed');
+function streamBytesFromBody_(body) {
+  var dict = dictHead_(body);
+  var lengthMatch = dict.match(/\/Length\s+(\d+)(?!\s+\d+\s+R)/);
+  if (!lengthMatch) throw new Error('pdf stream length is not a direct number');
+  var length = Number(lengthMatch[1]);
+  var at = body.indexOf('stream');
+  if (at < 0) throw new Error('pdf stream is missing');
+  var dataAt = at + 'stream'.length;
+  if (body.charCodeAt(dataAt) === 13) dataAt++;
+  if (body.charCodeAt(dataAt) === 10) dataAt++;
+  var bytes = [];
+  for (var i = 0; i < length; i++) bytes.push(body.charCodeAt(dataAt + i) & 255);
+  return bytes;
+}
+
+function decodeParms_(dict) {
+  var predictor = 1;
+  var columns = 0;
+  var pred = String(dict || '').match(/\/Predictor\s+(\d+)/);
+  if (pred) predictor = Number(pred[1]);
+  var cols = String(dict || '').match(/\/Columns\s+(\d+)/);
+  if (cols) columns = Number(cols[1]);
+  return { predictor: predictor, columns: columns };
+}
+
+function readField_(bytes, at, width) {
+  var value = 0;
+  for (var i = 0; i < width; i++) value = (value << 8) + (bytes[at + i] & 255);
+  return value >>> 0;
+}
+
+function applyXrefSection_(entries, section, override) {
+  var ids = Object.keys(section);
+  for (var i = 0; i < ids.length; i++) {
+    if (override || !entries[ids[i]]) entries[ids[i]] = section[ids[i]];
+  }
+}
+
+function readClassicXref_(text, offset) {
   var trailerAt = text.indexOf('trailer', offset);
+  if (trailerAt < 0) throw new Error('pdf trailer is missing');
   var trailerEnd = text.indexOf('startxref', trailerAt + 7);
-  var trailer = text.slice(trailerAt, trailerEnd);
+  var trailer = text.slice(trailerAt, trailerEnd < 0 ? text.length : trailerEnd);
   if (/\/Encrypt\b/.test(trailer)) throw new Error('encrypted pdfs are not merged');
   var cursor = offset + 4;
   var entries = {};
@@ -481,22 +758,151 @@ function parseClassicPdf_(bytes) {
     for (var i = 0; i < count; i++) {
       var line = text.slice(cursor).match(/^(\d{10})\s+(\d{5})\s+([nf])\s*/);
       if (!line) throw new Error('bad pdf xref row');
-      entries[startNum + i] = { offset: Number(line[1]), gen: Number(line[2]), used: line[3] === 'n' };
+      if (line[3] === 'n') entries[startNum + i] = { offset: Number(line[1]), gen: Number(line[2]) };
       cursor += line[0].length;
     }
   }
-  var objects = {};
-  var ids = Object.keys(entries);
-  for (var n = 0; n < ids.length; n++) {
-    var entry = entries[ids[n]];
-    if (!entry.used || ids[n] === '0') continue;
-    var obj = readPdfObject_(text, entry.offset);
-    objects[obj.num] = obj.body;
-    if (pdfType_(dictHead_(obj.body), 'ObjStm')) throw new Error('pdf object streams are not merged');
-  }
   var rootMatch = trailer.match(/\/Root\s+(\d+)\s+\d+\s+R/);
   if (!rootMatch) throw new Error('pdf catalog is missing');
-  return { objects: objects, root: Number(rootMatch[1]) };
+  var prevMatch = trailer.match(/\/Prev\s+(\d+)/);
+  var streamMatch = trailer.match(/\/XRefStm\s+(\d+)/);
+  return {
+    entries: entries,
+    root: Number(rootMatch[1]),
+    prev: prevMatch ? Number(prevMatch[1]) : 0,
+    xrefStm: streamMatch ? Number(streamMatch[1]) : 0
+  };
+}
+
+function readStreamXref_(text, offset) {
+  var obj = readPdfObject_(text, offset);
+  var dict = dictHead_(obj.body);
+  if (/\/Encrypt\b/.test(dict)) throw new Error('encrypted pdfs are not merged');
+  var widthMatch = dict.match(/\/W\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s*\]/);
+  if (!widthMatch) throw new Error('pdf xref stream has no widths');
+  var widths = [Number(widthMatch[1]), Number(widthMatch[2]), Number(widthMatch[3])];
+  var stride = widths[0] + widths[1] + widths[2];
+  var size = Number((dict.match(/\/Size\s+(\d+)/) || [])[1]);
+  if (!size) throw new Error('pdf xref stream has no size');
+  var ranges = [];
+  var indexMatch = dict.match(/\/Index\s*\[([^\]]*)\]/);
+  if (indexMatch && indexMatch[1].trim()) {
+    var parts = indexMatch[1].trim().split(/\s+/);
+    for (var p = 0; p < parts.length; p += 2) ranges.push([Number(parts[p]), Number(parts[p + 1])]);
+  } else ranges.push([0, size]);
+  var stream = streamBytesFromBody_(obj.body);
+  if (/\/FlateDecode\b/.test(dict)) stream = inflateZlib_(stream);
+  var parms = decodeParms_(dict);
+  if (parms.predictor > 1) stream = pngUnpredict_(stream, parms.columns || stride, parms.predictor);
+  var entries = {};
+  var cursor = 0;
+  for (var r = 0; r < ranges.length; r++) {
+    for (var n = 0; n < ranges[r][1]; n++) {
+      if (cursor + stride > stream.length) throw new Error('pdf xref stream ended early');
+      var type = widths[0] ? readField_(stream, cursor, widths[0]) : 1;
+      var field2 = widths[1] ? readField_(stream, cursor + widths[0], widths[1]) : 0;
+      var field3 = widths[2] ? readField_(stream, cursor + widths[0] + widths[1], widths[2]) : 0;
+      cursor += stride;
+      var id = ranges[r][0] + n;
+      if (!id || type === 0) continue;
+      if (type === 1) entries[id] = { offset: field2, gen: field3 };
+      else if (type === 2) entries[id] = { objstm: field2, index: field3 };
+      else throw new Error('pdf xref type ' + type + ' is not supported');
+    }
+  }
+  var rootMatch = dict.match(/\/Root\s+(\d+)\s+\d+\s+R/);
+  if (!rootMatch) throw new Error('pdf catalog is missing');
+  var prevMatch = dict.match(/\/Prev\s+(\d+)/);
+  return { entries: entries, root: Number(rootMatch[1]), prev: prevMatch ? Number(prevMatch[1]) : 0 };
+}
+
+function readXrefAt_(text, offset) {
+  if (text.slice(offset, offset + 4) === 'xref') return readClassicXref_(text, offset);
+  return readStreamXref_(text, offset);
+}
+
+function expandObjStm_(objects, id) {
+  var body = objects[id];
+  if (!body) throw new Error('pdf object stream ' + id + ' is missing');
+  var dict = dictHead_(body);
+  var count = Number((dict.match(/\/N\s+(\d+)/) || [])[1]);
+  var first = Number((dict.match(/\/First\s+(\d+)/) || [])[1]);
+  if (!count || !(first >= 0)) throw new Error('pdf object stream ' + id + ' is invalid');
+  var stream = streamBytesFromBody_(body);
+  if (/\/FlateDecode\b/.test(dict)) stream = inflateZlib_(stream);
+  var header = bytesToLatin1_(stream.slice(0, first)).trim().split(/\s+/);
+  if (header.length < count * 2) throw new Error('pdf object stream ' + id + ' header is short');
+  for (var i = 0; i < count; i++) {
+    var objId = Number(header[i * 2]);
+    var at = first + Number(header[i * 2 + 1]);
+    var end = i + 1 < count ? first + Number(header[(i + 1) * 2 + 1]) : stream.length;
+    if (!(at >= 0) || end < at || end > stream.length) throw new Error('pdf object stream ' + id + ' is out of range');
+    objects[objId] = bytesToLatin1_(stream.slice(at, end)).trim();
+  }
+}
+
+function parsePdf_(bytes) {
+  var text = bytesToLatin1_(bytes);
+  var marker = text.lastIndexOf('startxref');
+  if (marker < 0) throw new Error('pdf has no startxref');
+  var offsetMatch = text.slice(marker + 9).match(/\d+/);
+  if (!offsetMatch) throw new Error('pdf startxref is empty');
+  var entries = {};
+  var root = 0;
+  var offset = Number(offsetMatch[0]);
+  var guard = 0;
+  while (offset && guard < 8) {
+    var section = readXrefAt_(text, offset);
+    if (!root) root = section.root;
+    applyXrefSection_(entries, section.entries, false);
+    if (section.xrefStm) {
+      applyXrefSection_(entries, readXrefAt_(text, section.xrefStm).entries, true);
+    }
+    offset = section.prev;
+    guard++;
+  }
+  if (!root) throw new Error('pdf catalog is missing');
+  var objects = {};
+  var ids = Object.keys(entries);
+  var n;
+  function loadPlainObject_(id) {
+    var key = Number(id);
+    if (Object.prototype.hasOwnProperty.call(objects, key)) return objects[key];
+    var entry = entries[key];
+    if (!entry || entry.objstm || (!entry.offset && entry.offset !== 0)) return '';
+    var obj = readPdfObject_(text, entry.offset, function (lengthId) {
+      var raw = loadPlainObject_(lengthId);
+      var match = String(raw || '').match(/^\s*(-?\d+)/);
+      if (!match) throw new Error('pdf stream length is not a direct number');
+      return Number(match[1]);
+    });
+    objects[key] = obj.body;
+    return obj.body;
+  }
+  for (n = 0; n < ids.length; n++) {
+    if (entries[ids[n]].objstm) continue;
+    loadPlainObject_(ids[n]);
+  }
+  var expanded = {};
+  for (n = 0; n < ids.length; n++) {
+    if (!entries[ids[n]].objstm) continue;
+    var streamId = entries[ids[n]].objstm;
+    if (expanded[streamId] || !objects[streamId]) continue;
+    if (!pdfType_(dictHead_(objects[streamId]), 'ObjStm')) continue;
+    expandObjStm_(objects, streamId);
+    expanded[streamId] = true;
+  }
+  var streamIds = {};
+  for (n = 0; n < ids.length; n++) {
+    if (entries[ids[n]].objstm) streamIds[entries[ids[n]].objstm] = true;
+  }
+  var objectIds = Object.keys(objects);
+  for (n = 0; n < objectIds.length; n++) {
+    if (objectIds[n] === '__expanded') continue;
+    var kind = dictHead_(objects[objectIds[n]]);
+    if (streamIds[objectIds[n]] || pdfType_(kind, 'XRef') || pdfType_(kind, 'ObjStm')) delete objects[objectIds[n]];
+  }
+  return { objects: objects, root: root };
 }
 
 function collectPdfPages_(objects, pagesId, inheritedBox, found, pageTreeIds) {
@@ -529,6 +935,27 @@ function rewritePdfRefs_(body, map, pageTreeIds, newPagesId) {
   return head + rest;
 }
 
+function catalogPagesId_(parsed) {
+  var objects = parsed && parsed.objects ? parsed.objects : {};
+  function pagesFrom_(body) {
+    if (!body) return 0;
+    var dict = dictHead_(body);
+    if (!pdfType_(dict, 'Catalog')) return 0;
+    var pages = refsInArray_(dict, 'Pages');
+    return pages.length === 1 ? pages[0] : 0;
+  }
+  var rootBody = objects[parsed.root];
+  var fromRoot = pagesFrom_(rootBody);
+  if (fromRoot) return fromRoot;
+  if (rootBody && pdfType_(dictHead_(rootBody), 'Pages')) return Number(parsed.root);
+  var ids = Object.keys(objects);
+  for (var i = 0; i < ids.length; i++) {
+    var found = pagesFrom_(objects[ids[i]]);
+    if (found) return found;
+  }
+  throw new Error('pdf catalog is missing');
+}
+
 function ensureMediaBox_(body, box) {
   if (!box) throw new Error('pdf page has no media box');
   if (/\/MediaBox\s*\[/.test(dictHead_(body))) return body;
@@ -540,31 +967,34 @@ function ensureMediaBox_(body, box) {
  * @param {Array<Array<number>|Buffer>} pdfList
  * @return {number[]}
  */
-function mergePdfBytes(pdfList) {
+function mergePdfBytes(pdfList, names) {
   var inputs = pdfList || [];
   if (!inputs.length) throw new Error('no pdfs to merge');
   var pages = [];
   var copied = [];
   for (var i = 0; i < inputs.length; i++) {
-    if (!isPdfHeader_(inputs[i])) throw new Error('merge input ' + (i + 1) + ' is not a pdf');
-    var parsed = parseClassicPdf_(inputs[i]);
-    var root = parsed.objects[parsed.root];
-    if (!root || !pdfType_(dictHead_(root), 'Catalog')) throw new Error('pdf catalog is missing');
-    var tree = refsInArray_(dictHead_(root), 'Pages');
-    if (tree.length !== 1) throw new Error('pdf catalog has no page tree');
-    var found = [];
-    var pageTreeIds = {};
-    collectPdfPages_(parsed.objects, tree[0], '', found, pageTreeIds);
-    pageTreeIds[parsed.root] = false;
-    var keep = {};
-    var objectIds = Object.keys(parsed.objects);
-    for (var k = 0; k < objectIds.length; k++) {
-      var id = Number(objectIds[k]);
-      if (id === parsed.root || pageTreeIds[id]) continue;
-      keep[id] = parsed.objects[id];
+    var label = names && names[i] ? names[i] : 'merge input ' + (i + 1);
+    if (!isPdfHeader_(inputs[i])) throw new Error(label + ' is not a pdf');
+    try {
+      var parsed = parsePdf_(inputs[i]);
+      var treeId = catalogPagesId_(parsed);
+      var found = [];
+      var pageTreeIds = {};
+      collectPdfPages_(parsed.objects, treeId, '', found, pageTreeIds);
+      pageTreeIds[parsed.root] = false;
+      var keep = {};
+      var objectIds = Object.keys(parsed.objects);
+      for (var k = 0; k < objectIds.length; k++) {
+        var id = Number(objectIds[k]);
+        if (id === parsed.root || pageTreeIds[id]) continue;
+        keep[id] = parsed.objects[id];
+      }
+      copied.push({ keep: keep, pages: found, pageTreeIds: pageTreeIds });
+      for (var p = 0; p < found.length; p++) pages.push(found[p]);
+    } catch (error) {
+      var message = error && error.message ? error.message : String(error);
+      throw new Error(label + ': ' + message);
     }
-    copied.push({ keep: keep, pages: found, pageTreeIds: pageTreeIds });
-    for (var p = 0; p < found.length; p++) pages.push(found[p]);
   }
   var nextId = 3;
   var parts = ['%PDF-1.4\n%\xE2\xE3\xCF\xD3\n'];
@@ -626,7 +1056,7 @@ function mergePdfBytes(pdfList) {
 }
 
 function pdfPageCount(bytes) {
-  var parsed = parseClassicPdf_(bytes);
+  var parsed = parsePdf_(bytes);
   var root = parsed.objects[parsed.root];
   var tree = refsInArray_(dictHead_(root), 'Pages');
   var found = [];
@@ -730,6 +1160,7 @@ function createMergedInvoicePdf(rows, month) {
   var before = [];
   try {
     var pdfs = [];
+    var names = [];
     var i;
     for (i = 0; i < selected.length; i++) {
       var original = DriveApp.getFileById(selected[i].id);
@@ -741,11 +1172,16 @@ function createMergedInvoicePdf(rows, month) {
       });
       var copy = original.makeCopy('__merge_copy_' + original.getName(), folder);
       copies.push(copy);
-      pdfs.push(bytesForMergeCopy_(copy));
+      names.push(original.getName());
+      try {
+        pdfs.push(bytesReadyForMerge_(bytesForMergeCopy_(copy), original.getName()));
+      } catch (error) {
+        throw new Error(original.getName() + ': ' + (error && error.message ? error.message : error));
+      }
     }
     var name = mergedPdfName(month);
     if (!pdfs.length) return { fileId: '', url: '', pages: 0, name: name, originals: before };
-    var merged = mergePdfBytes(pdfs);
+    var merged = mergePdfBytes(pdfs, names);
     var created = folder.createFile(Utilities.newBlob(toByteArray_(merged), 'application/pdf', name));
     var previous = folder.getFilesByName(name);
     while (previous.hasNext()) {
@@ -771,6 +1207,42 @@ function createMergedInvoicePdf(rows, month) {
         copies[c].setTrashed(true);
       } catch (ignore) {}
     }
+  }
+}
+
+/**
+ * Turns a PDF our merger cannot read into a plain PDF.
+ * Uses a Drive copy with OCR off. The original file is not opened here.
+ */
+function normalizePdfForMerge_(bytes, name) {
+  if (typeof Drive === 'undefined' || !Drive.Files || typeof Drive.Files.insert !== 'function') {
+    throw new Error('pdf could not be normalized');
+  }
+  var created = null;
+  try {
+    created = Drive.Files.insert(
+      { title: '__merge_norm__', mimeType: 'application/vnd.google-apps.document' },
+      Utilities.newBlob(toByteArray_(bytes), 'application/pdf', name || 'invoice.pdf'),
+      { convert: true, ocr: false }
+    );
+    return DriveApp.getFileById(created.id).getAs('application/pdf').getBytes();
+  } finally {
+    if (created && created.id) {
+      try {
+        DriveApp.getFileById(created.id).setTrashed(true);
+      } catch (ignore) {}
+    }
+  }
+}
+
+function bytesReadyForMerge_(bytes, name) {
+  try {
+    parsePdf_(bytes);
+    return toByteArray_(bytes);
+  } catch (error) {
+    var normalized = normalizePdfForMerge_(bytes, name);
+    parsePdf_(normalized);
+    return toByteArray_(normalized);
   }
 }
 
@@ -840,6 +1312,8 @@ if (typeof module !== 'undefined') {
     mergedPdfName: mergedPdfName,
     mergePdfBytes: mergePdfBytes,
     jpegToPdfBytes: jpegToPdfBytes,
-    pdfPageCount: pdfPageCount
+    pdfPageCount: pdfPageCount,
+    inflateZlib_: inflateZlib_,
+    pngUnpredict_: pngUnpredict_
   };
 }
