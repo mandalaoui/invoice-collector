@@ -23,7 +23,7 @@
 - [ ] 3.3 Improve rules in `RULES.md`/Settings until MVP criteria met.
 
 ## Phase 4 — Output
-- [ ] 4.1 Monthly summary + merged PDF (copies only).
+- [x] 4.1 Monthly summary + merged PDF (copies only). ✅
 - [ ] 4.2 Gmail draft to accountant (never send).
 - [ ] 4.3 Monthly time trigger + error email to owner only.
 
