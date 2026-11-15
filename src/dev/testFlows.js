@@ -106,7 +106,8 @@ function testAllSoFar() {
     testResumeFlowResult_(),
     testOcrResult_(),
     testExtractResult_(),
-    testValidationResult_()
+    testValidationResult_(),
+    testPhase2Result_()
   ];
   var summary = summarizeTaskResults_(rows);
   Logger.log('task\tresult\tdetail');
@@ -139,6 +140,12 @@ function testValidationResult_() {
   Logger.log('testAllSoFar step 2.3: testValidation');
   var validation = testValidation();
   return { task: '2.3', result: validation.result, detail: validation.detail };
+}
+
+function testPhase2Result_() {
+  Logger.log('testAllSoFar step 2.4: testPhase2');
+  var phase = testPhase2();
+  return { task: '2.4', result: phase.result, detail: phase.detail };
 }
 
 function runTaskCheck_(task, check) {

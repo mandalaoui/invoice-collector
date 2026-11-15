@@ -145,3 +145,17 @@ test('the dev save logs a batch and does not search the mailbox', () => {
   assert.equal(source.includes('GmailApp.search'), false);
   assert.equal(source.includes('has:attachment'), false);
 });
+
+test('invoice rows are written once per message and a repeated document is DUPLICATE', () => {
+  global.INVOICE_HEADERS = config.INVOICE_HEADERS;
+  const first = { source: 'm1 01-tax', vendor_id: '990100018', doc_number: '10482', status: 'OK', total: 1003 };
+  const again = { source: 'm1 01-tax', vendor_id: '990100018', doc_number: '10482', status: 'OK', total: 1003 };
+  const other = { source: 'm9 01-tax', vendor_id: '990100018', doc_number: '10482', status: 'OK', total: 1003 };
+  assert.equal(sheet.planInvoiceRows([], [first, again]).length, 1);
+  assert.equal(sheet.planInvoiceRows([first], [again]).length, 0);
+  const duplicate = sheet.planInvoiceRows([], [first, other]);
+  assert.equal(duplicate.length, 2);
+  assert.equal(duplicate[1].status, 'DUPLICATE');
+  assert.equal(sheet.buildInvoiceRow(first).length, config.INVOICE_HEADERS.length);
+  assert.equal(sheet.invoiceSourceId('m1 01-tax'), 'm1');
+});

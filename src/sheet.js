@@ -217,6 +217,110 @@ function clearCollectCursor_() {
   PropertiesService.getScriptProperties().deleteProperty(COLLECT_CURSOR_PROPERTY);
 }
 
+function invoiceSourceId(source) {
+  var text = String(source || '').trim();
+  if (!text) return '';
+  return text.split(/\s+/)[0];
+}
+
+function invoiceDocKey(row) {
+  var vendor = row && row.vendor_id != null ? String(row.vendor_id).trim() : '';
+  var number = row && row.doc_number != null ? String(row.doc_number).trim() : '';
+  if (!vendor || !number) return '';
+  return vendor + '|' + number;
+}
+
+/**
+ * Skip a source already stored. A new source with the same vendor id and
+ * document number is kept once and marked DUPLICATE.
+ * @return {Array<Object>}
+ */
+function planInvoiceRows(existing, incoming) {
+  var seenSource = {};
+  var seenDoc = {};
+  var rows = existing || [];
+  var i;
+  for (i = 0; i < rows.length; i++) {
+    var sourceId = invoiceSourceId(rows[i] && rows[i].source);
+    if (sourceId) seenSource[sourceId] = true;
+    var docKey = invoiceDocKey(rows[i]);
+    if (docKey) seenDoc[docKey] = true;
+  }
+  var writes = [];
+  var batch = incoming || [];
+  for (i = 0; i < batch.length; i++) {
+    var row = batch[i] || {};
+    var id = invoiceSourceId(row.source);
+    if (id && seenSource[id]) continue;
+    var key = invoiceDocKey(row);
+    var copy = {};
+    var fields = Object.keys(row);
+    for (var k = 0; k < fields.length; k++) copy[fields[k]] = row[fields[k]];
+    if (key && seenDoc[key]) copy.status = 'DUPLICATE';
+    writes.push(copy);
+    if (id) seenSource[id] = true;
+    if (key) seenDoc[key] = true;
+  }
+  return writes;
+}
+
+function buildInvoiceRow(entry) {
+  var source = entry || {};
+  return INVOICE_HEADERS.map(function (key) {
+    var value = source[key];
+    if (value == null) return '';
+    return value;
+  });
+}
+
+function invoiceSheet_() {
+  var sheet = openCollectorSpreadsheet_().getSheetByName('Invoices');
+  if (!sheet) throw new Error('Invoices tab is missing. Run setupCollectorSheet().');
+  if (sheet.getLastRow() === 0) sheet.appendRow(INVOICE_HEADERS.slice());
+  return sheet;
+}
+
+function readInvoiceRows() {
+  var sheet = invoiceSheet_();
+  var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return [];
+  var rows = [];
+  for (var r = 1; r < values.length; r++) {
+    var row = {};
+    var blank = true;
+    for (var c = 0; c < INVOICE_HEADERS.length; c++) {
+      row[INVOICE_HEADERS[c]] = values[r][c];
+      if (values[r][c] !== '' && values[r][c] != null) blank = false;
+    }
+    if (!blank) rows.push(row);
+  }
+  return rows;
+}
+
+/**
+ * Appends rows that are not already on the sheet. A second call adds nothing.
+ * @return {{added: number, skipped: number}}
+ */
+function appendInvoiceRows(rows) {
+  var incoming = rows || [];
+  var writes = planInvoiceRows(readInvoiceRows(), incoming);
+  if (!writes.length) return { added: 0, skipped: incoming.length };
+  var sheet = invoiceSheet_();
+  var grid = writes.map(buildInvoiceRow);
+  var formats = grid.map(function () {
+    return INVOICE_HEADERS.map(function (key) {
+      if (key === 'doc_date' || key === 'vendor_id' || key === 'doc_number' || key === 'allocation_number' || key === 'source') {
+        return '@';
+      }
+      return 'General';
+    });
+  });
+  var range = sheet.getRange(sheet.getLastRow() + 1, 1, grid.length, INVOICE_HEADERS.length);
+  range.setNumberFormats(formats);
+  range.setValues(grid);
+  return { added: writes.length, skipped: incoming.length - writes.length };
+}
+
 if (typeof module !== 'undefined') {
   module.exports = {
     COLLECT_CURSOR_PROPERTY: COLLECT_CURSOR_PROPERTY,
@@ -227,6 +331,9 @@ if (typeof module !== 'undefined') {
     fixtureRunSelection: fixtureRunSelection,
     runShouldStop: runShouldStop,
     resumeCursor: resumeCursor,
-    buildRunLogRow: buildRunLogRow
+    buildRunLogRow: buildRunLogRow,
+    invoiceSourceId: invoiceSourceId,
+    planInvoiceRows: planInvoiceRows,
+    buildInvoiceRow: buildInvoiceRow
   };
 }

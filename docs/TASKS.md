@@ -15,7 +15,7 @@
 - [x] 2.1 `ocr.js`: text layer first, Drive OCR fallback (Hebrew). Done when: text returned for all fixture types. ✅
 - [x] 2.2 `extract.js` (pure): total, date, doc_number, vendor_id, VAT, doc_type, allocation_number + confidence. Done when: unit tests pass on fixtures. ✅
 - [x] 2.3 Validation rules + statuses. Done when: bad samples get REVIEW with a reason. ✅
-- [ ] 2.4 Write rows to `Invoices`. Done when: sheet filled for test month.
+- [x] 2.4 Write rows to `Invoices`. Done when: sheet filled for test month. ✅
 
 ## Phase 3 — Real month (tuning)
 - [ ] 3.1 Fill `AnswerKey` manually for last month.
