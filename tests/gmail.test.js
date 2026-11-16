@@ -131,6 +131,23 @@ test('client query builder keeps Settings text and does not add fixture filters'
   assert.equal(clientSearch.includes('from:me'), false);
 });
 
+test('reset label search is the month window plus the two collector labels', () => {
+  const plan = gmail.buildResetLabelQueries({
+    month: '2026-11',
+    today: '2026-11-16',
+    processed_label: 'invoices/processed',
+    review_label: 'invoices/review'
+  });
+  assert.deepEqual(plan.queries, [
+    'label:invoices-processed after:2026/10/31 before:2026/12/01',
+    'label:invoices-review after:2026/10/31 before:2026/12/01'
+  ]);
+  plan.queries.forEach((query) => {
+    assert.equal(query.includes('-label:'), false);
+    assert.equal(query.includes('from:me'), false);
+  });
+});
+
 test('empty Settings searches do not search the mailbox', () => {
   const plan = gmail.buildCollectQueries({
     month: '2026-11',

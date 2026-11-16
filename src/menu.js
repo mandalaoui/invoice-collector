@@ -11,7 +11,8 @@ function collectorMenuItems() {
     { label: 'Test run (draft to me)', fn: 'testRun' },
     { label: 'Turn monthly trigger on', fn: 'turnMonthlyTriggerOn' },
     { label: 'Turn monthly trigger off', fn: 'turnMonthlyTriggerOff' },
-    { label: 'Export OCR text', fn: 'exportOcrText' }
+    { label: 'Export OCR text', fn: 'exportOcrText' },
+    { label: 'Reset month (re-run)', fn: 'resetMonth' }
   ];
 }
 
@@ -187,12 +188,119 @@ function exportOcrText() {
   return { month: month, files: written, url: folder.getUrl() };
 }
 
+function resetMonthConfirmText(month, processedLabel, reviewLabel) {
+  return (
+    'Reset ' +
+    month +
+    '? This removes the ' +
+    (processedLabel || 'invoices/processed') +
+    ' and ' +
+    (reviewLabel || 'invoices/review') +
+    " labels and deletes this month's Invoices rows. Drive files and Gmail messages are not changed."
+  );
+}
+
+function confirmResetMonth_(month, processedLabel, reviewLabel) {
+  var ui = SpreadsheetApp.getUi();
+  var answer = ui.alert(
+    'Reset month (re-run)',
+    resetMonthConfirmText(month, processedLabel, reviewLabel),
+    ui.ButtonSet.OK_CANCEL
+  );
+  return answer === ui.Button.OK;
+}
+
+function writeSearchQueriesDefault_() {
+  var patch = { value: defaultSearchQueriesValue(), note: '' };
+  var i;
+  for (i = 0; i < SETTINGS_FIELDS.length; i++) {
+    if (SETTINGS_FIELDS[i].key === 'search_queries') patch.note = SETTINGS_FIELDS[i].note;
+  }
+  var sheet = openCollectorSpreadsheet_().getSheetByName('Settings');
+  if (!sheet) throw new Error('Settings tab is missing. Run setupCollectorSheet().');
+  var values = sheet.getDataRange().getValues();
+  for (i = 0; i < values.length; i++) {
+    if (String(values[i][0] || '').trim() !== 'search_queries') continue;
+    sheet.getRange(i + 1, 2).setValue(patch.value);
+    sheet.getRange(i + 1, 3).setValue(patch.note);
+    return patch.value;
+  }
+  throw new Error('Settings is missing search_queries.');
+}
+
+function clearMonthLabels_(config, month) {
+  var source = config || {};
+  var plan = buildResetLabelQueries({
+    month: month,
+    today: source.today || todayYmd_(),
+    processed_label: source.processed_label,
+    review_label: source.review_label
+  });
+  var seen = {};
+  var threads = [];
+  var q;
+  for (q = 0; q < plan.queries.length; q++) {
+    var found = searchClientThreads_(plan.queries[q]);
+    var t;
+    for (t = 0; t < found.length; t++) {
+      var id = found[t].getId();
+      if (seen[id]) continue;
+      seen[id] = true;
+      threads.push(found[t]);
+    }
+  }
+  var names = [
+    source.processed_label || 'invoices/processed',
+    source.review_label || 'invoices/review'
+  ];
+  var removed = 0;
+  var i;
+  for (i = 0; i < threads.length; i++) {
+    var labels = threads[i].getLabels();
+    var n;
+    for (n = 0; n < names.length; n++) {
+      var label = null;
+      var L;
+      for (L = 0; L < labels.length; L++) {
+        if (labels[L].getName() === names[n]) label = labels[L];
+      }
+      if (!label) continue;
+      threads[i].removeLabel(label);
+      removed++;
+    }
+  }
+  return removed;
+}
+
+function deleteMonthInvoiceRows_(month) {
+  return deleteInvoiceSources_(sourcesForMonthReset(readInvoiceRows(), month));
+}
+
+/**
+ * Confirms, then clears this month's collector labels and Invoices rows
+ * and restores the default search queries. Does not change Drive files
+ * or Gmail message content.
+ */
+function resetMonth() {
+  var config = getConfig();
+  var month = resolveCollectMonth(config.month, todayYmd_());
+  if (!confirmResetMonth_(month, config.processed_label, config.review_label)) {
+    return { cancelled: true, month: month };
+  }
+  var unlabeled = clearMonthLabels_(config, month);
+  var rows = deleteMonthInvoiceRows_(month);
+  writeSearchQueriesDefault_();
+  Logger.log('resetMonth %s labels=%s rows=%s', month, unlabeled, rows);
+  return { cancelled: false, month: month, unlabeled: unlabeled, rows: rows };
+}
+
 if (typeof module !== 'undefined') {
   module.exports = {
     collectorMenuItems: collectorMenuItems,
     testRunBatchSize: testRunBatchSize,
     limitRows_: limitRows_,
     testRunPdfName: testRunPdfName,
-    exportOcrFolderName: exportOcrFolderName
+    exportOcrFolderName: exportOcrFolderName,
+    resetMonthConfirmText: resetMonthConfirmText
   };
 }

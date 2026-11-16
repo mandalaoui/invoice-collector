@@ -110,6 +110,30 @@ function monthWindowTerm_(month) {
  * @param {Object} config
  * @return {{month: string, queries: string[]}}
  */
+/**
+ * Finds messages already labeled for this month so the labels can be removed.
+ * The month window is the same after:/before: pair as a collect run.
+ * @return {{month: string, queries: string[]}}
+ */
+function buildResetLabelQueries(config) {
+  var source = config || {};
+  var month = resolveCollectMonth(source.month, source.today);
+  var windowTerm = monthWindowTerm_(month);
+  var labels = [
+    source.processed_label || 'invoices/processed',
+    source.review_label || 'invoices/review'
+  ];
+  var queries = [];
+  var i;
+  for (i = 0; i < labels.length; i++) {
+    var name = labelSearchName(labels[i]);
+    if (!name) continue;
+    var term = /^[A-Za-z0-9_-]+$/.test(name) ? 'label:' + name : 'label:"' + name + '"';
+    queries.push(term + ' ' + windowTerm);
+  }
+  return { month: month, queries: queries };
+}
+
 function buildCollectQueries(config) {
   var source = config || {};
   var month = resolveCollectMonth(source.month, source.today);
@@ -712,6 +736,7 @@ if (typeof module !== 'undefined') {
     labelSearchName: labelSearchName,
     excludeProcessedTerm: excludeProcessedTerm,
     buildCollectQueries: buildCollectQueries,
+    buildResetLabelQueries: buildResetLabelQueries,
     formatGmailQueryLog: formatGmailQueryLog,
     formatRunCoverage: formatRunCoverage,
     textWithLinks: textWithLinks,

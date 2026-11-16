@@ -269,6 +269,27 @@ function rowInMonth_(row, month) {
   return iso.slice(0, 7) === month;
 }
 
+function sourceIdOf_(row) {
+  return String(row && row.source != null ? row.source : '')
+    .trim()
+    .split(/\s+/)[0];
+}
+
+/** Source ids of rows the month view includes. Other months stay. */
+function sourcesForMonthReset(rows, month) {
+  var list = rowsForMonth(rows, month);
+  var ids = [];
+  var seen = {};
+  var i;
+  for (i = 0; i < list.length; i++) {
+    var id = sourceIdOf_(list[i]);
+    if (!id || seen[id]) continue;
+    seen[id] = true;
+    ids.push(id);
+  }
+  return ids;
+}
+
 function rowsForMonth(rows, month) {
   var source = rows || [];
   var kept = [];
@@ -1419,6 +1440,7 @@ if (typeof module !== 'undefined') {
     rowFileStem_: rowFileStem_,
     summarizeMonth: summarizeMonth,
     rowsForMonth: rowsForMonth,
+    sourcesForMonthReset: sourcesForMonthReset,
     summaryGrid: summaryGrid,
     withMonthlySummary: withMonthlySummary,
     driveIdFromLink: driveIdFromLink,
