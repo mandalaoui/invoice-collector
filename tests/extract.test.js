@@ -180,3 +180,38 @@ test('Hebrew quotes and מס׳ normalize before matching', () => {
   assert.equal(extract.normalizeExtractText('מס׳ 10482'), 'מספר 10482');
   assert.equal(extract.normalizeExtractText('סה״כ'), 'סה"כ');
 });
+
+test('VAT is the rate slice of the total, and the buyer match tolerates quotes', () => {
+  const settings = fixtureConfig();
+  const inclusive = extract.extractInvoice(
+    [
+      'מקור',
+      'קפה הכרמל בע"מ',
+      'סה"כ כולל מע"מ: 118.00',
+      'מע"מ',
+      '18.00',
+      'סה"כ לתשלום: 118.00',
+      'לכבוד',
+      'סטודיו דמה לבדיקות   בע״מ',
+      'ח.פ 990-100-091'
+    ].join('\n'),
+    settings,
+    { senderName: 'קפה הכרמל' }
+  );
+  assert.equal(inclusive.total, 118);
+  assert.equal(inclusive.vat_amount, 18);
+  assert.notEqual(inclusive.vat_amount, inclusive.total);
+  assert.equal(inclusive.vendor_name, 'קפה הכרמל בע"מ');
+  assert.equal(inclusive.buyer_name_ok, true);
+  const copied = extract.classifyInvoice(
+    { doc_type: 'tax_invoice', total: 118, vat_amount: 118, amount_before_vat: 0, confidence: 0.9 },
+    settings,
+    []
+  );
+  assert.equal(copied.status, 'REVIEW');
+  assert.ok(copied.reasons.some((reason) => /equals total/i.test(reason)));
+  const fallback = extract.extractInvoice('מקור\nלכבוד\nסטודיו דמה לבדיקות בע"מ', settings, {
+    senderName: 'Accounts Desk'
+  });
+  assert.equal(fallback.vendor_name, 'Accounts Desk');
+});

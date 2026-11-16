@@ -10,8 +10,13 @@ function collectorMenuItems() {
     { label: 'Run this month', fn: 'runThisMonth' },
     { label: 'Test run (draft to me)', fn: 'testRun' },
     { label: 'Turn monthly trigger on', fn: 'turnMonthlyTriggerOn' },
-    { label: 'Turn monthly trigger off', fn: 'turnMonthlyTriggerOff' }
+    { label: 'Turn monthly trigger off', fn: 'turnMonthlyTriggerOff' },
+    { label: 'Export OCR text', fn: 'exportOcrText' }
   ];
+}
+
+function exportOcrFolderName(month) {
+  return 'ocr-text-' + String(month || '');
 }
 
 function onOpen() {
@@ -147,11 +152,47 @@ function testRun() {
   }
 }
 
+/**
+ * Writes the OCR text of the current month's documents into Drive/ocr-text-YYYY-MM.
+ * Does not send mail. Download that folder to tests/real/ocr-text locally.
+ * @return {{month: string, files: number, url: string}}
+ */
+function exportOcrText() {
+  var config = getConfig();
+  var month = resolveCollectMonth(config.month, todayYmd_());
+  if (!config.invoices_folder_id) throw new Error('invoices_folder_id is empty');
+  var monthFolder = DriveApp.getFolderById(config.invoices_folder_id);
+  var parents = monthFolder.getParents();
+  var parent = parents.hasNext() ? parents.next() : DriveApp.getRootFolder();
+  var folder = childFolder_(parent, exportOcrFolderName(month));
+  var rows = rowsForMonth(readInvoiceRows(), month);
+  var written = 0;
+  for (var i = 0; i < rows.length; i++) {
+    var id = driveIdFromLink(rows[i].file_link);
+    if (!id) continue;
+    try {
+      var file = DriveApp.getFileById(id);
+      var read = readDriveFileText(file);
+      var name = file.getName() + '.txt';
+      var text = read && read.text ? String(read.text) : '';
+      var existing = folder.getFilesByName(name);
+      if (existing.hasNext()) existing.next().setContent(text);
+      else folder.createFile(Utilities.newBlob(text, 'text/plain', name));
+      written++;
+    } catch (error) {
+      Logger.log('exportOcrText skip %s %s', id, error && error.message ? error.message : error);
+    }
+  }
+  Logger.log('exportOcrText %s files=%s %s', month, written, folder.getUrl());
+  return { month: month, files: written, url: folder.getUrl() };
+}
+
 if (typeof module !== 'undefined') {
   module.exports = {
     collectorMenuItems: collectorMenuItems,
     testRunBatchSize: testRunBatchSize,
     limitRows_: limitRows_,
-    testRunPdfName: testRunPdfName
+    testRunPdfName: testRunPdfName,
+    exportOcrFolderName: exportOcrFolderName
   };
 }

@@ -9,8 +9,10 @@ test('the sheet menu exposes install, run, test, and the trigger', () => {
   const items = menu.collectorMenuItems();
   assert.deepEqual(
     items.map((item) => item.fn),
-    ['install', 'runThisMonth', 'testRun', 'turnMonthlyTriggerOn', 'turnMonthlyTriggerOff']
+    ['install', 'runThisMonth', 'testRun', 'turnMonthlyTriggerOn', 'turnMonthlyTriggerOff', 'exportOcrText']
   );
+  assert.equal(items[5].label, 'Export OCR text');
+  assert.equal(menu.exportOcrFolderName('2026-11'), 'ocr-text-2026-11');
   assert.equal(items[0].label, 'Install');
   assert.equal(items[2].label, 'Test run (draft to me)');
 });

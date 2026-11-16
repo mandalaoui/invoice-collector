@@ -1,6 +1,9 @@
 node_modules/
 dist/
 
+# Real client OCR downloaded from Drive. Never commit.
+tests/real/
+
 # clasp OAuth tokens (the script id in .clasp.json is not a secret)
 .clasprc.json
 .clasprc/

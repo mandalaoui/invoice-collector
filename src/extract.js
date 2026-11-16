@@ -358,17 +358,69 @@ function docTypeLine_(line, phrases) {
   return false;
 }
 
+function compactCompany_(text) {
+  return foldExtract_(text).replace(/["']/g, '').replace(/\s+/g, '');
+}
+
+function ownCompanyLine_(line, config) {
+  var names = String((config && config.company_name) || '').split(/\n/);
+  var flat = compactCompany_(line);
+  if (!flat) return false;
+  for (var i = 0; i < names.length; i++) {
+    var name = compactCompany_(names[i]);
+    if (name && flat === name) return true;
+  }
+  return false;
+}
+
+function businessNameLine_(line) {
+  var flat = compactCompany_(line);
+  if (flat.indexOf('בעמ') >= 0) return true;
+  return /\b(ltd|inc|llc|gmbh|corp)\b\.?/i.test(line);
+}
+
+function buyerMarkerLine_(line) {
+  return phraseHits_(line, 'לכבוד') || phraseHits_(line, 'bill to') || phraseHits_(line, 'customer');
+}
+
+function noiseNameLine_(line) {
+  var flat = squashExtract_(line);
+  var noise = ['מקור', 'העתק', 'נאמן למקור', 'original', 'copy'];
+  for (var i = 0; i < noise.length; i++) {
+    if (flat === squashExtract_(noise[i])) return true;
+  }
+  return false;
+}
+
+function nameLikeLine_(line, phrases, idKeywords) {
+  if (line.indexOf('@') >= 0) return false;
+  if (dateToken_(line)) return false;
+  if (docTypeLine_(line, phrases)) return false;
+  if ((idKeywords || []).some(function (keyword) { return phraseHits_(line, keyword); })) return false;
+  if (noiseNameLine_(line)) return false;
+  if (!/[A-Za-z\u0590-\u05FF]/.test(line)) return false;
+  return true;
+}
+
 function findVendorName_(lines, config, senderName) {
-  var phrases = typedPhrases_(config.keywords_doc_type);
-  var idKeywords = config.keywords_vendor_id || [];
-  for (var i = 0; i < lines.length; i++) {
-    var line = lines[i];
-    if (line.indexOf('@') >= 0) continue;
-    if (dateToken_(line)) continue;
-    if (docTypeLine_(line, phrases)) continue;
-    if (idKeywords.some(function (keyword) { return phraseHits_(line, keyword); })) continue;
-    if (!/[A-Za-z\u0590-\u05FF]/.test(line)) continue;
-    return line.replace(/\s+/g, ' ').trim();
+  var settings = config || {};
+  var phrases = typedPhrases_(settings.keywords_doc_type);
+  var idKeywords = settings.keywords_vendor_id || [];
+  var buyerAt = lines.length;
+  var i;
+  for (i = 0; i < lines.length; i++) {
+    if (buyerMarkerLine_(lines[i])) {
+      buyerAt = i;
+      break;
+    }
+  }
+  for (i = 0; i < buyerAt; i++) {
+    if (!nameLikeLine_(lines[i], phrases, idKeywords) || ownCompanyLine_(lines[i], settings)) continue;
+    if (businessNameLine_(lines[i])) return lines[i].replace(/\s+/g, ' ').trim();
+  }
+  for (i = 0; i < buyerAt; i++) {
+    if (!nameLikeLine_(lines[i], phrases, idKeywords) || ownCompanyLine_(lines[i], settings)) continue;
+    return lines[i].replace(/\s+/g, ' ').trim();
   }
   var fallback = String(senderName || '').trim();
   return fallback || null;
@@ -411,13 +463,27 @@ function keywordPages(pageTexts, config) {
   return hits;
 }
 
+function idInText_(text, companyId) {
+  var id = String(companyId || '').replace(/\D/g, '');
+  if (id.length < 8) return false;
+  var joined = String(text || '').replace(/(\d)[\s.\-]+(?=\d)/g, '$1');
+  var at = joined.indexOf(id);
+  while (at >= 0) {
+    var before = at > 0 ? joined.charAt(at - 1) : '';
+    var after = joined.charAt(at + id.length) || '';
+    if (!/\d/.test(before) && !/\d/.test(after)) return true;
+    at = joined.indexOf(id, at + 1);
+  }
+  return false;
+}
+
 function buyerNameOk_(text, config) {
-  var folded = foldExtract_(text);
-  var companyId = String(config.company_id || '').replace(/\D/g, '');
-  if (companyId && folded.indexOf(companyId) >= 0) return true;
-  var names = String(config.company_name || '').split(/\n/);
+  var settings = config || {};
+  if (idInText_(text, settings.company_id)) return true;
+  var folded = compactCompany_(text);
+  var names = String(settings.company_name || '').split(/\n/);
   for (var i = 0; i < names.length; i++) {
-    var name = foldExtract_(names[i]);
+    var name = compactCompany_(names[i]);
     if (name && folded.indexOf(name) >= 0) return true;
   }
   return false;
@@ -436,15 +502,85 @@ function knownVendor_(email, whitelist) {
   return false;
 }
 
-function vatCheckPasses_(before, vat, total, rate, tolerance) {
-  if (before == null || vat == null || total == null) return false;
+function expectedVatFromTotal_(total, rate) {
+  if (total == null || total === '') return null;
+  var ratio = Number(rate);
+  if (!isFinite(ratio) || ratio < 0) ratio = 0.18;
+  var amount = Math.abs(Number(total));
+  if (!isFinite(amount)) return null;
+  return Math.round((amount * ratio / (1 + ratio)) * 100) / 100;
+}
+
+function collectKeywordAmounts_(lines, keywords, skipKeywords) {
+  var found = [];
+  var list = keywords || [];
+  var skip = skipKeywords || [];
+  var k;
+  var i;
+  for (k = 0; k < list.length; k++) {
+    for (i = 0; i < lines.length; i++) {
+      if (!phraseHits_(lines[i], list[k])) continue;
+      var tail = keywordTail_(lines[i], list[k], skip);
+      var amount = tail != null ? parseAmounts_(tail) : null;
+      if (tail != null && amount == null) {
+        var text = normalizeExtractText(lines[i]);
+        var needle = normalizeExtractText(list[k]);
+        var at = text.indexOf(needle);
+        if (at > 0) amount = parseAmounts_(text.slice(0, at));
+        if (amount == null && String(tail).trim() === '' && i + 1 < lines.length) {
+          amount = parseAmounts_(lines[i + 1]);
+        }
+      }
+      if (tail == null) {
+        var sharesSkip = false;
+        var s;
+        for (s = 0; s < skip.length; s++) {
+          if (squashExtract_(skip[s]) !== squashExtract_(list[k]) && phraseHits_(lines[i], skip[s])) sharesSkip = true;
+        }
+        if (sharesSkip) continue;
+        amount = parseAmounts_(lines[i]);
+        if (amount == null && i + 1 < lines.length) amount = parseAmounts_(lines[i + 1]);
+      }
+      if (amount != null) found.push(amount);
+    }
+  }
+  return found;
+}
+
+function pickVatAmount_(candidates, total, rate, tolerance) {
   var tol = Number(tolerance);
   if (!isFinite(tol)) tol = 1;
-  var ratio = Number(rate);
-  if (!isFinite(ratio)) ratio = 0.18;
-  var sumOk = Math.abs(before + vat - total) <= tol;
-  var rateOk = Math.abs(Math.abs(vat) - Math.abs(before) * ratio) <= tol;
-  return sumOk && rateOk;
+  var usable = [];
+  var list = candidates || [];
+  var i;
+  for (i = 0; i < list.length; i++) {
+    if (total != null && Math.abs(total) > tol && Math.abs(Math.abs(list[i]) - Math.abs(total)) <= tol) continue;
+    usable.push(list[i]);
+  }
+  if (!usable.length) return null;
+  var expected = expectedVatFromTotal_(total, rate);
+  if (expected == null) return usable[0];
+  var best = usable[0];
+  var gap = Math.abs(Math.abs(best) - expected);
+  for (i = 1; i < usable.length; i++) {
+    var next = Math.abs(Math.abs(usable[i]) - expected);
+    if (next < gap) {
+      best = usable[i];
+      gap = next;
+    }
+  }
+  return best;
+}
+
+function vatCheckPasses_(before, vat, total, rate, tolerance) {
+  if (vat == null || total == null) return false;
+  var tol = Number(tolerance);
+  if (!isFinite(tol)) tol = 1;
+  if (Math.abs(total) > tol && Math.abs(Math.abs(vat) - Math.abs(total)) <= tol) return false;
+  var expected = expectedVatFromTotal_(total, rate);
+  if (expected == null || Math.abs(Math.abs(vat) - expected) > tol) return false;
+  if (before == null) return true;
+  return Math.abs(before + vat - total) <= tol;
 }
 
 /**
@@ -458,8 +594,14 @@ function extractInvoice(text, config, context) {
   var meta = context || {};
   var lines = extractLines_(text);
   var before = amountForKeywords_(lines, settings.keywords_before_vat, []);
-  var vat = amountForKeywords_(lines, settings.keywords_vat, settings.keywords_before_vat);
   var total = amountForKeywords_(lines, settings.keywords_total, settings.keywords_before_vat);
+  var vatSkip = [].concat(settings.keywords_before_vat || [], settings.keywords_total || []);
+  var vat = pickVatAmount_(
+    collectKeywordAmounts_(lines, settings.keywords_vat, vatSkip),
+    total,
+    settings.vat_rate,
+    settings.amount_tolerance
+  );
   var totalIndex = firstKeywordLine_(lines, settings.keywords_total, settings.keywords_before_vat);
   var docDate = findDate_(lines, settings);
   var vendorId = findVendorId_(lines, settings);
@@ -519,13 +661,19 @@ function classifyInvoice(fields, config, existing) {
     if (!moneyClose_(before + vat, total, settings.amount_tolerance)) {
       reasons.push('total does not equal amount before VAT plus VAT');
     }
-    if (!moneyClose_(Math.abs(vat), Math.abs(before) * rate, settings.amount_tolerance)) {
-      reasons.push('VAT is not the configured rate');
-    }
   } else if (total != null && (before == null || vat == null)) {
     reasons.push('VAT breakdown was not found');
   } else if (total == null) {
     reasons.push('total was not found');
+  }
+  var tol = Number(settings.amount_tolerance);
+  if (!isFinite(tol)) tol = 1;
+  if (vat != null && total != null && Math.abs(total) > tol && moneyClose_(Math.abs(vat), Math.abs(total), tol)) {
+    reasons.push('VAT equals total');
+  }
+  var expectedVat = expectedVatFromTotal_(total, rate);
+  if (vat != null && expectedVat != null && !moneyClose_(Math.abs(vat), expectedVat, tol)) {
+    reasons.push('VAT is not the configured rate');
   }
   if (doc.doc_type === 'receipt') reasons.push('not valid for VAT deduction alone');
   var allocationAt = settings.allocation_threshold;
