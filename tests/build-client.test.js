@@ -20,6 +20,8 @@ test('build:client writes Code.gs without src/dev and copies the manifest', () =
   assert.equal(code.includes('function testAllSoFar'), false);
   assert.equal(code.includes('function sendTestFixtures'), false);
   assert.equal(code.match(/function toByteArray_/g).length, 1);
+  assert.match(code, /var CODE_BUILD = '[0-9a-f]{40}';/);
+  assert.equal(code.includes("var CODE_BUILD = 'dev';"), false);
   const manifest = fs.readFileSync(path.join(root, 'dist', 'appsscript.json'), 'utf8');
   assert.equal(manifest, fs.readFileSync(path.join(root, 'src', 'appsscript.json'), 'utf8'));
   new vm.Script('"use strict";\n' + code, { filename: 'Code.gs' });

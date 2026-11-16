@@ -9,10 +9,11 @@ test('the sheet menu exposes install, run, test, and the trigger', () => {
   const items = menu.collectorMenuItems();
   assert.deepEqual(
     items.map((item) => item.fn),
-    ['install', 'runThisMonth', 'testRun', 'turnMonthlyTriggerOn', 'turnMonthlyTriggerOff', 'exportOcrText', 'resetMonth']
+    ['install', 'runThisMonth', 'testRun', 'turnMonthlyTriggerOn', 'turnMonthlyTriggerOff', 'exportOcrText', 'resetMonth', 'diagnoseMonth']
   );
   assert.equal(items[5].label, 'Export OCR text');
   assert.equal(items[6].label, 'Reset month (re-run)');
+  assert.equal(items[7].label, 'Diagnose');
   assert.equal(
     menu.resetMonthConfirmText('2026-11', 'invoices/processed', 'invoices/review'),
     "Reset 2026-11? This removes the invoices/processed and invoices/review labels and deletes this month's Invoices rows. Drive files and Gmail messages are not changed."

@@ -4,6 +4,9 @@
  */
 
 var COLLECTOR_SPREADSHEET_NAME = 'Invoice Collector';
+
+/** Replaced in dist/Code.gs by scripts/build-client.js with the git commit. */
+var CODE_BUILD = 'dev';
 var SPREADSHEET_ID_PROPERTY = 'SPREADSHEET_ID';
 
 var SHEET_NAMES = ['Invoices', 'RunLog', 'Comparison', 'AnswerKey', 'Settings'];
@@ -564,6 +567,7 @@ function buildInitialGrids() {
 if (typeof module !== 'undefined') {
   module.exports = {
     COLLECTOR_SPREADSHEET_NAME: COLLECTOR_SPREADSHEET_NAME,
+    CODE_BUILD: CODE_BUILD,
     SHEET_NAMES: SHEET_NAMES,
     INVOICE_HEADERS: INVOICE_HEADERS,
     RUN_LOG_HEADERS: RUN_LOG_HEADERS,

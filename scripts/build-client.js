@@ -4,6 +4,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 
 const root = path.join(__dirname, '..');
 const srcDir = path.join(root, 'src');
@@ -75,9 +76,24 @@ function dropDuplicateFunctions_(source, seen) {
   return out + source.slice(cursor);
 }
 
+function gitBuildId() {
+  try {
+    return execSync('git rev-parse HEAD', { cwd: root, encoding: 'utf8' }).trim();
+  } catch (error) {
+    return 'unknown';
+  }
+}
+
+function stampBuildId(source, id) {
+  const token = "var CODE_BUILD = 'dev';";
+  if (source.indexOf(token) < 0) throw new Error('CODE_BUILD marker missing');
+  return source.replace(token, "var CODE_BUILD = '" + String(id || 'unknown') + "';");
+}
+
 function buildClient() {
   const names = clientSourceNames();
   const seen = {};
+  const buildId = gitBuildId();
   const parts = names.map(function (name) {
     const body = dropDuplicateFunctions_(
       fs.readFileSync(path.join(srcDir, name), 'utf8').replace(/^\uFEFF/, '').replace(/\s+$/, ''),
@@ -86,14 +102,19 @@ function buildClient() {
     return '// ' + name + '\n' + body;
   });
   fs.mkdirSync(distDir, { recursive: true });
-  fs.writeFileSync(path.join(distDir, 'Code.gs'), parts.join('\n\n') + '\n', 'utf8');
+  fs.writeFileSync(path.join(distDir, 'Code.gs'), stampBuildId(parts.join('\n\n') + '\n', buildId), 'utf8');
   fs.copyFileSync(path.join(srcDir, 'appsscript.json'), path.join(distDir, 'appsscript.json'));
   return names;
 }
 
 if (require.main === module) {
   const names = buildClient();
-  console.log('dist/Code.gs from ' + names.join(', '));
+  console.log('dist/Code.gs ' + gitBuildId() + ' from ' + names.join(', '));
 }
 
-module.exports = { clientSourceNames: clientSourceNames, buildClient: buildClient };
+module.exports = {
+  clientSourceNames: clientSourceNames,
+  gitBuildId: gitBuildId,
+  stampBuildId: stampBuildId,
+  buildClient: buildClient
+};

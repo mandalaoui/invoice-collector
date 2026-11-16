@@ -81,12 +81,27 @@ function typedPhrases_(lines) {
     });
 }
 
-function findDocType_(text, config) {
+function findDocTypeHit_(text, config) {
   var phrases = typedPhrases_(config.keywords_doc_type);
-  for (var i = 0; i < phrases.length; i++) {
-    if (phraseHits_(text, phrases[i].phrase)) return phrases[i].type;
+  var lines = extractLines_(text);
+  var i;
+  var n;
+  for (i = 0; i < phrases.length; i++) {
+    if (!phraseHits_(text, phrases[i].phrase)) continue;
+    var line = '';
+    for (n = 0; n < lines.length; n++) {
+      if (phraseHits_(lines[n], phrases[i].phrase)) {
+        line = lines[n];
+        break;
+      }
+    }
+    return { value: phrases[i].type, keyword: phrases[i].phrase, line: line };
   }
-  return null;
+  return { value: null, keyword: '', line: '' };
+}
+
+function findDocType_(text, config) {
+  return findDocTypeHit_(text, config).value;
 }
 
 function dateToken_(line) {
@@ -187,7 +202,7 @@ function keywordTail_(line, phrase, skipKeywords) {
   return null;
 }
 
-function amountForKeywords_(lines, keywords, skipKeywords) {
+function amountHit_(lines, keywords, skipKeywords) {
   var list = keywords || [];
   var skip = skipKeywords || [];
   var k;
@@ -211,12 +226,19 @@ function amountForKeywords_(lines, keywords, skipKeywords) {
         }
         if (sharesSkip) continue;
         amount = parseAmounts_(lines[i]);
-        if (amount == null && i + 1 < lines.length) amount = parseAmounts_(lines[i + 1]);
+        if (amount == null && i + 1 < lines.length) {
+          amount = parseAmounts_(lines[i + 1]);
+          if (amount != null) return { value: amount, keyword: list[k], line: lines[i + 1] };
+        }
       }
-      if (amount != null) return amount;
+      if (amount != null) return { value: amount, keyword: list[k], line: lines[i] };
     }
   }
-  return null;
+  return { value: null, keyword: '', line: '' };
+}
+
+function amountForKeywords_(lines, keywords, skipKeywords) {
+  return amountHit_(lines, keywords, skipKeywords).value;
 }
 
 function collectIdNumbers_(lines, config) {
@@ -275,7 +297,11 @@ function quoteDocLabel_(keyword) {
   return flat === squashExtract_('הצעת מחיר') || flat === squashExtract_('quote') || flat === squashExtract_('מספר');
 }
 
-function findDocNumber_(lines, config) {
+function emptyHit_() {
+  return { value: null, keyword: '', line: '' };
+}
+
+function findDocNumberHit_(lines, config) {
   var keywords = (config.keywords_doc_number || []).slice();
   keywords.push('קבלה מספר');
   keywords.push("מס' מסמך");
@@ -299,55 +325,112 @@ function findDocNumber_(lines, config) {
         var after;
         for (after = i; after < lines.length; after++) {
           var quoted = letterDocToken_(lines[after]);
-          if (quoted) return quoted;
+          if (quoted) return { value: quoted, keyword: keywords[k], line: lines[after] };
         }
         continue;
       }
+      var letterLine = lines[i];
       var letter = letterDocToken_(lines[i]);
-      if (!letter && i + 1 < lines.length) letter = letterDocToken_(lines[i + 1]);
-      if (letter) return letter;
+      if (!letter && i + 1 < lines.length) {
+        letter = letterDocToken_(lines[i + 1]);
+        letterLine = lines[i + 1];
+      }
+      if (letter) return { value: letter, keyword: keywords[k], line: letterLine };
+      var numberLine = lines[i];
       var numeric = numericDocToken_(lines[i], ids);
-      if (!numeric && i + 1 < lines.length) numeric = numericDocToken_(lines[i + 1], ids);
-      if (numeric) return numeric;
+      if (!numeric && i + 1 < lines.length) {
+        numeric = numericDocToken_(lines[i + 1], ids);
+        numberLine = lines[i + 1];
+      }
+      if (numeric) return { value: numeric, keyword: keywords[k], line: numberLine };
     }
   }
-  return null;
+  return emptyHit_();
 }
 
-function findDate_(lines, config) {
+function findDocNumber_(lines, config) {
+  return findDocNumberHit_(lines, config).value;
+}
+
+function findDateHit_(lines, config) {
   var keywords = (config.keywords_date || []).slice().sort(function (a, b) {
     return squashExtract_(b).length - squashExtract_(a).length;
   });
   var index = firstKeywordLine_(lines, keywords, []);
   if (index >= 0) {
-    var token = dateToken_(lines[index]) || (index + 1 < lines.length ? dateToken_(lines[index + 1]) : '');
-    if (token) return token;
+    var token = dateToken_(lines[index]);
+    var line = lines[index];
+    var keyword = '';
+    var k;
+    for (k = 0; k < keywords.length; k++) {
+      if (phraseHits_(lines[index], keywords[k])) {
+        keyword = keywords[k];
+        break;
+      }
+    }
+    if (!token && index + 1 < lines.length) {
+      token = dateToken_(lines[index + 1]);
+      line = lines[index + 1];
+    }
+    if (token) return { value: token, keyword: keyword, line: line };
   }
   for (var i = 0; i < lines.length; i++) {
     var fallback = dateToken_(lines[i]);
-    if (fallback && inCollectMonth_(fallback, config.month)) return fallback;
+    if (fallback && inCollectMonth_(fallback, config.month)) {
+      return { value: fallback, keyword: 'month fallback', line: lines[i] };
+    }
   }
-  return null;
+  return emptyHit_();
 }
 
-function findVendorId_(lines, config) {
+function findDate_(lines, config) {
+  return findDateHit_(lines, config).value;
+}
+
+function findVendorIdHit_(lines, config) {
   var company = String(config.company_id || '').replace(/\D/g, '');
   var keywords = config.keywords_vendor_id || [];
   for (var i = 0; i < lines.length; i++) {
-    if (!keywords.some(function (keyword) { return phraseHits_(lines[i], keyword); })) continue;
+    var keyword = '';
+    var k;
+    for (k = 0; k < keywords.length; k++) {
+      if (phraseHits_(lines[i], keywords[k])) {
+        keyword = keywords[k];
+        break;
+      }
+    }
+    if (!keyword) continue;
     var ids = lines[i].match(/\d{9}/g) || [];
     for (var n = 0; n < ids.length; n++) {
-      if (ids[n] !== company) return ids[n];
+      if (ids[n] !== company) return { value: ids[n], keyword: keyword, line: lines[i] };
     }
   }
-  return null;
+  return emptyHit_();
+}
+
+function findVendorId_(lines, config) {
+  return findVendorIdHit_(lines, config).value;
+}
+
+function findAllocationHit_(lines, config) {
+  var keywords = config.keywords_allocation || [];
+  var index = firstKeywordLine_(lines, keywords, []);
+  if (index < 0) return emptyHit_();
+  var match = lines[index].match(/\d{10,}/);
+  var keyword = '';
+  var k;
+  for (k = 0; k < keywords.length; k++) {
+    if (phraseHits_(lines[index], keywords[k])) {
+      keyword = keywords[k];
+      break;
+    }
+  }
+  if (!match) return { value: null, keyword: keyword, line: lines[index] };
+  return { value: match[0], keyword: keyword, line: lines[index] };
 }
 
 function findAllocation_(lines, config) {
-  var index = firstKeywordLine_(lines, config.keywords_allocation || [], []);
-  if (index < 0) return null;
-  var match = lines[index].match(/\d{10,}/);
-  return match ? match[0] : null;
+  return findAllocationHit_(lines, config).value;
 }
 
 function docTypeLine_(line, phrases) {
@@ -405,7 +488,7 @@ function nameLikeLine_(line, phrases, idKeywords) {
   return true;
 }
 
-function findVendorName_(lines, config, senderName) {
+function findVendorNameHit_(lines, config, senderName) {
   var settings = config || {};
   var phrases = typedPhrases_(settings.keywords_doc_type);
   var idKeywords = settings.keywords_vendor_id || [];
@@ -419,21 +502,32 @@ function findVendorName_(lines, config, senderName) {
   }
   for (i = 0; i < buyerAt; i++) {
     if (!nameLikeLine_(lines[i], phrases, idKeywords) || ownCompanyLine_(lines[i], settings)) continue;
-    if (businessNameLine_(lines[i])) return lines[i].replace(/\s+/g, ' ').trim();
+    if (businessNameLine_(lines[i])) {
+      return { value: lines[i].replace(/\s+/g, ' ').trim(), keyword: 'business name', line: lines[i] };
+    }
   }
   for (i = 0; i < buyerAt; i++) {
     if (!nameLikeLine_(lines[i], phrases, idKeywords) || ownCompanyLine_(lines[i], settings)) continue;
-    return lines[i].replace(/\s+/g, ' ').trim();
+    return { value: lines[i].replace(/\s+/g, ' ').trim(), keyword: 'first name line', line: lines[i] };
   }
   var fallback = String(senderName || '').trim();
-  return fallback || null;
+  if (!fallback) return emptyHit_();
+  return { value: fallback, keyword: 'sender display name', line: '' };
+}
+
+function findVendorName_(lines, config, senderName) {
+  return findVendorNameHit_(lines, config, senderName).value;
+}
+
+function findCurrencyHit_(text, totalLine, config) {
+  var sample = String(totalLine || '') + '\n' + String(text || '');
+  if (/\bUSD\b|US\$|\$/.test(sample)) return { value: 'USD', keyword: 'USD', line: totalLine || '' };
+  if (/ש"ח|₪|\bILS\b|\bNIS\b/.test(sample)) return { value: 'ILS', keyword: 'ILS', line: totalLine || '' };
+  return { value: (config && config.currency_default) || 'ILS', keyword: 'currency default', line: '' };
 }
 
 function findCurrency_(text, totalLine, config) {
-  var sample = String(totalLine || '') + '\n' + String(text || '');
-  if (/\bUSD\b|US\$|\$/.test(sample)) return 'USD';
-  if (/ש"ח|₪|\bILS\b|\bNIS\b/.test(sample)) return 'ILS';
-  return config.currency_default || 'ILS';
+  return findCurrencyHit_(text, totalLine, config).value;
 }
 
 /**
@@ -480,16 +574,24 @@ function idInText_(text, companyId) {
   return false;
 }
 
-function buyerNameOk_(text, config) {
+function buyerNameHit_(text, config) {
   var settings = config || {};
-  if (idInText_(text, settings.company_id)) return true;
+  if (idInText_(text, settings.company_id)) {
+    return { value: true, keyword: 'company_id', line: String(settings.company_id || '') };
+  }
   var folded = compactCompany_(text);
   var names = String(settings.company_name || '').split(/\n/);
   for (var i = 0; i < names.length; i++) {
     var name = compactCompany_(names[i]);
-    if (name && folded.indexOf(name) >= 0) return true;
+    if (name && folded.indexOf(name) >= 0) {
+      return { value: true, keyword: 'company_name', line: names[i] };
+    }
   }
-  return false;
+  return { value: false, keyword: '', line: '' };
+}
+
+function buyerNameOk_(text, config) {
+  return buyerNameHit_(text, config).value;
 }
 
 function knownVendor_(email, whitelist) {
@@ -514,7 +616,7 @@ function expectedVatFromTotal_(total, rate) {
   return Math.round((amount * ratio / (1 + ratio)) * 100) / 100;
 }
 
-function collectKeywordAmounts_(lines, keywords, skipKeywords) {
+function collectKeywordAmountHits_(lines, keywords, skipKeywords) {
   var found = [];
   var list = keywords || [];
   var skip = skipKeywords || [];
@@ -525,6 +627,7 @@ function collectKeywordAmounts_(lines, keywords, skipKeywords) {
       if (!phraseHits_(lines[i], list[k])) continue;
       var tail = keywordTail_(lines[i], list[k], skip);
       var amount = tail != null ? parseAmounts_(tail) : null;
+      var used = lines[i];
       if (tail != null && amount == null) {
         var text = normalizeExtractText(lines[i]);
         var needle = normalizeExtractText(list[k]);
@@ -532,6 +635,7 @@ function collectKeywordAmounts_(lines, keywords, skipKeywords) {
         if (at > 0) amount = parseAmounts_(text.slice(0, at));
         if (amount == null && String(tail).trim() === '' && i + 1 < lines.length) {
           amount = parseAmounts_(lines[i + 1]);
+          if (amount != null) used = lines[i + 1];
         }
       }
       if (tail == null) {
@@ -542,12 +646,50 @@ function collectKeywordAmounts_(lines, keywords, skipKeywords) {
         }
         if (sharesSkip) continue;
         amount = parseAmounts_(lines[i]);
-        if (amount == null && i + 1 < lines.length) amount = parseAmounts_(lines[i + 1]);
+        if (amount == null && i + 1 < lines.length) {
+          amount = parseAmounts_(lines[i + 1]);
+          if (amount != null) used = lines[i + 1];
+        }
       }
-      if (amount != null) found.push(amount);
+      if (amount != null) found.push({ value: amount, keyword: list[k], line: used });
     }
   }
   return found;
+}
+
+function collectKeywordAmounts_(lines, keywords, skipKeywords) {
+  var hits = collectKeywordAmountHits_(lines, keywords, skipKeywords);
+  var found = [];
+  for (var i = 0; i < hits.length; i++) found.push(hits[i].value);
+  return found;
+}
+
+function chooseVatHit_(hits, total, rate, tolerance) {
+  var amounts = [];
+  var i;
+  for (i = 0; i < hits.length; i++) amounts.push(hits[i].value);
+  var picked = pickVatAmount_(amounts, total, rate, tolerance);
+  if (picked == null) return { value: null, keyword: '', line: '' };
+  var tol = Number(tolerance);
+  if (!isFinite(tol)) tol = 1;
+  var usable = [];
+  for (i = 0; i < hits.length; i++) {
+    if (total != null && Math.abs(total) > tol && Math.abs(Math.abs(hits[i].value) - Math.abs(total)) <= tol) continue;
+    usable.push(hits[i]);
+  }
+  if (!usable.length) return { value: null, keyword: '', line: '' };
+  var expected = expectedVatFromTotal_(total, rate);
+  if (expected == null) return usable[0];
+  var best = usable[0];
+  var gap = Math.abs(Math.abs(best.value) - expected);
+  for (i = 1; i < usable.length; i++) {
+    var next = Math.abs(Math.abs(usable[i].value) - expected);
+    if (next < gap) {
+      best = usable[i];
+      gap = next;
+    }
+  }
+  return best;
 }
 
 function pickVatAmount_(candidates, total, rate, tolerance) {
@@ -592,44 +734,83 @@ function vatCheckPasses_(before, vat, total, rate, tolerance) {
  * @param {{senderEmail?: string, senderName?: string}=} context
  * @return {Object}
  */
-function extractInvoice(text, config, context) {
+function evidenceRow_(field, hit) {
+  var source = hit || emptyHit_();
+  return {
+    field: field,
+    value: source.value == null ? '' : source.value,
+    keyword: source.keyword || '',
+    line: source.line || ''
+  };
+}
+
+/**
+ * Same fields as extractInvoice, plus the keyword and line behind each one.
+ * @return {{fields: Object, evidence: Array<Object>}}
+ */
+function explainInvoice(text, config, context) {
   var settings = config || {};
   var meta = context || {};
   var lines = extractLines_(text);
-  var before = amountForKeywords_(lines, settings.keywords_before_vat, []);
-  var total = amountForKeywords_(lines, settings.keywords_total, settings.keywords_before_vat);
+  var before = amountHit_(lines, settings.keywords_before_vat, []);
+  var total = amountHit_(lines, settings.keywords_total, settings.keywords_before_vat);
   var vatSkip = [].concat(settings.keywords_before_vat || [], settings.keywords_total || []);
-  var vat = pickVatAmount_(
-    collectKeywordAmounts_(lines, settings.keywords_vat, vatSkip),
-    total,
+  var vat = chooseVatHit_(
+    collectKeywordAmountHits_(lines, settings.keywords_vat, vatSkip),
+    total.value,
     settings.vat_rate,
     settings.amount_tolerance
   );
-  var totalIndex = firstKeywordLine_(lines, settings.keywords_total, settings.keywords_before_vat);
-  var docDate = findDate_(lines, settings);
-  var vendorId = findVendorId_(lines, settings);
+  var docType = findDocTypeHit_(text, settings);
+  var docNumber = findDocNumberHit_(lines, settings);
+  var docDate = findDateHit_(lines, settings);
+  var vendorId = findVendorIdHit_(lines, settings);
+  var vendorName = findVendorNameHit_(lines, settings, meta.senderName);
+  var currency = findCurrencyHit_(text, total.line, settings);
+  var allocation = findAllocationHit_(lines, settings);
+  var buyer = buyerNameHit_(text, settings);
   var fields = {
-    vendor_name: findVendorName_(lines, settings, meta.senderName),
-    vendor_id: vendorId,
-    doc_type: findDocType_(text, settings),
-    doc_number: findDocNumber_(lines, settings),
-    doc_date: docDate,
-    amount_before_vat: before,
-    vat_amount: vat,
-    total: total,
-    currency: findCurrency_(text, totalIndex >= 0 ? lines[totalIndex] : '', settings),
-    allocation_number: findAllocation_(lines, settings),
-    buyer_name_ok: buyerNameOk_(text, settings)
+    vendor_name: vendorName.value,
+    vendor_id: vendorId.value,
+    doc_type: docType.value,
+    doc_number: docNumber.value,
+    doc_date: docDate.value,
+    amount_before_vat: before.value,
+    vat_amount: vat.value,
+    total: total.value,
+    currency: currency.value,
+    allocation_number: allocation.value,
+    buyer_name_ok: buyer.value
   };
   var score = 0;
   if (fields.total != null) score += 0.25;
-  if (docDate && inCollectMonth_(docDate, settings.month)) score += 0.2;
+  if (docDate.value && inCollectMonth_(docDate.value, settings.month)) score += 0.2;
   if (fields.doc_number) score += 0.15;
   if (fields.vendor_id) score += 0.15;
-  if (vatCheckPasses_(before, vat, total, settings.vat_rate, settings.amount_tolerance)) score += 0.15;
+  if (vatCheckPasses_(before.value, vat.value, total.value, settings.vat_rate, settings.amount_tolerance)) score += 0.15;
   if (knownVendor_(meta.senderEmail, settings.vendor_whitelist)) score += 0.1;
   fields.confidence = Math.round(score * 100) / 100;
-  return fields;
+  return {
+    fields: fields,
+    evidence: [
+      evidenceRow_('vendor_name', vendorName),
+      evidenceRow_('vendor_id', vendorId),
+      evidenceRow_('doc_type', docType),
+      evidenceRow_('doc_number', docNumber),
+      evidenceRow_('doc_date', docDate),
+      evidenceRow_('amount_before_vat', before),
+      evidenceRow_('vat_amount', vat),
+      evidenceRow_('total', total),
+      evidenceRow_('currency', currency),
+      evidenceRow_('allocation_number', allocation),
+      evidenceRow_('buyer_name_ok', buyer),
+      evidenceRow_('confidence', { value: fields.confidence, keyword: '', line: '' })
+    ]
+  };
+}
+
+function extractInvoice(text, config, context) {
+  return explainInvoice(text, config, context).fields;
 }
 
 function moneyClose_(left, right, tolerance) {
@@ -730,6 +911,7 @@ if (typeof module !== 'undefined') {
     EXTRACT_VERSION: EXTRACT_VERSION,
     normalizeExtractText: normalizeExtractText,
     extractInvoice: extractInvoice,
+    explainInvoice: explainInvoice,
     keywordPages: keywordPages,
     noticeWithoutInvoice: noticeWithoutInvoice,
     classifyInvoice: classifyInvoice

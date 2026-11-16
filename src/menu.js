@@ -12,7 +12,8 @@ function collectorMenuItems() {
     { label: 'Turn monthly trigger on', fn: 'turnMonthlyTriggerOn' },
     { label: 'Turn monthly trigger off', fn: 'turnMonthlyTriggerOff' },
     { label: 'Export OCR text', fn: 'exportOcrText' },
-    { label: 'Reset month (re-run)', fn: 'resetMonth' }
+    { label: 'Reset month (re-run)', fn: 'resetMonth' },
+    { label: 'Diagnose', fn: 'diagnoseMonth' }
   ];
 }
 
@@ -188,6 +189,176 @@ function exportOcrText() {
   return { month: month, files: written, url: folder.getUrl() };
 }
 
+function debugTextClip(text, limit) {
+  var cap = Number(limit);
+  if (!(cap > 0)) cap = 600;
+  var body = String(text == null ? '' : text);
+  if (body.length <= cap) return body;
+  return body.slice(0, cap);
+}
+
+/**
+ * Debug sheet rows. Does not read Gmail or Drive.
+ * @param {{build?: string, month?: string, companyName?: string, companyId?: string, searchRaw?: string, queries?: Array<{query: string, count: number}>, rows?: Array<Object>}} report
+ * @return {Array<Array<*>>}
+ */
+function debugGrid(report) {
+  var source = report || {};
+  var grid = [
+    ['build', source.build || ''],
+    ['month', source.month || ''],
+    ['company_name', source.companyName || ''],
+    ['company_id', source.companyId || ''],
+    ['search_queries', source.searchRaw == null ? '' : String(source.searchRaw)],
+    [],
+    ['query', 'count']
+  ];
+  var queries = source.queries || [];
+  var i;
+  for (i = 0; i < queries.length; i++) {
+    grid.push([queries[i].query || '', queries[i].count == null ? '' : queries[i].count]);
+  }
+  var rows = source.rows || [];
+  for (i = 0; i < rows.length; i++) {
+    var row = rows[i] || {};
+    var stored = row.stored || {};
+    grid.push([]);
+    grid.push(['source', row.source || '']);
+    grid.push(['sender', row.sender || '']);
+    grid.push(['text', debugTextClip(row.text, 600)]);
+    grid.push(['field', 'stored', 'extracted', 'keyword', 'line']);
+    var evidence = row.evidence || [];
+    var n;
+    for (n = 0; n < evidence.length; n++) {
+      var item = evidence[n] || {};
+      var saved = stored[item.field];
+      grid.push([
+        item.field || '',
+        saved == null ? '' : saved,
+        item.value == null ? '' : item.value,
+        item.keyword || '',
+        item.line || ''
+      ]);
+    }
+  }
+  return grid;
+}
+
+function rawSearchQueries_() {
+  var values = readSettingsValues_();
+  var i;
+  for (i = 0; i < values.length; i++) {
+    if (String(values[i][0] || '').trim() === 'search_queries') {
+      return values[i].length > 1 && values[i][1] != null ? String(values[i][1]) : '';
+    }
+  }
+  return '';
+}
+
+function diagnoseQueryCounts_(config) {
+  var source = config || {};
+  var plan = buildCollectQueries({
+    month: source.month,
+    today: source.today || todayYmd_(),
+    processed_label: source.processed_label,
+    search_queries: source.search_queries,
+    vendor_whitelist: source.vendor_whitelist
+  });
+  var queries = [];
+  var i;
+  for (i = 0; i < plan.queries.length; i++) {
+    queries.push({ query: plan.queries[i], count: searchClientThreads_(plan.queries[i]).length });
+  }
+  return { month: plan.month, queries: queries };
+}
+
+function diagnoseInvoiceRow_(row, config) {
+  var item = row || {};
+  var id = driveIdFromLink(item.file_link);
+  var text = '';
+  if (!id) text = 'no file';
+  else {
+    try {
+      var read = readDriveFileText(DriveApp.getFileById(id));
+      text = read && read.text ? String(read.text) : '';
+    } catch (error) {
+      text = 'text read failed: ' + (error && error.message ? error.message : error);
+    }
+  }
+  var sender = '';
+  var context = { senderEmail: '', senderName: '' };
+  var messageId = messageIdFromSource(item.source);
+  if (messageId) {
+    try {
+      var message = GmailApp.getMessageById(messageId);
+      if (message) {
+        sender = String(message.getFrom() || '');
+        context.senderEmail = emailFromHeader(sender);
+        context.senderName = displayNameFromHeader(sender);
+      }
+    } catch (ignore) {
+      sender = '';
+    }
+  }
+  var explained = explainInvoice(text, config, context);
+  return {
+    source: item.source || '',
+    sender: sender,
+    text: text,
+    stored: item,
+    evidence: explained.evidence
+  };
+}
+
+function writeDebugSheet_(grid) {
+  var ss = openCollectorSpreadsheet_();
+  var sheet = ss.getSheetByName('Debug');
+  if (!sheet) sheet = ss.insertSheet('Debug');
+  sheet.clearContents();
+  var width = 1;
+  var r;
+  for (r = 0; r < grid.length; r++) width = Math.max(width, (grid[r] || []).length);
+  var rect = [];
+  for (r = 0; r < grid.length; r++) {
+    var copy = (grid[r] || []).slice();
+    while (copy.length < width) copy.push('');
+    rect.push(copy);
+  }
+  if (!rect.length) return sheet;
+  sheet.getRange(1, 1, rect.length, width).setValues(rect);
+  return sheet;
+}
+
+/**
+ * Writes the Debug tab for the Settings month.
+ * Reads Gmail counts and Drive text. Does not change mail, files, or invoice rows.
+ */
+function diagnoseMonth() {
+  var config = getConfig();
+  var month = resolveCollectMonth(config.month, todayYmd_());
+  config.month = month;
+  config.today = todayYmd_();
+  var counted = diagnoseQueryCounts_(config);
+  var invoices = rowsForMonth(readInvoiceRows(), month);
+  var rows = [];
+  var i;
+  for (i = 0; i < invoices.length; i++) rows.push(diagnoseInvoiceRow_(invoices[i], config));
+  var build = typeof CODE_BUILD === 'undefined' ? '' : CODE_BUILD;
+  writeDebugSheet_(
+    debugGrid({
+      build: build,
+      month: month,
+      companyName: config.company_name,
+      companyId: config.company_id,
+      searchRaw: rawSearchQueries_(),
+      queries: counted.queries,
+      rows: rows
+    })
+  );
+  Logger.log('diagnoseMonth %s build=%s queries=%s rows=%s', month, build, counted.queries.length, rows.length);
+  return { month: month, build: build, queries: counted.queries.length, rows: rows.length };
+}
+
 function resetMonthConfirmText(month, processedLabel, reviewLabel) {
   return (
     'Reset ' +
@@ -301,6 +472,8 @@ if (typeof module !== 'undefined') {
     limitRows_: limitRows_,
     testRunPdfName: testRunPdfName,
     exportOcrFolderName: exportOcrFolderName,
-    resetMonthConfirmText: resetMonthConfirmText
+    resetMonthConfirmText: resetMonthConfirmText,
+    debugTextClip: debugTextClip,
+    debugGrid: debugGrid
   };
 }
