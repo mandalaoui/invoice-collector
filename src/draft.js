@@ -3,6 +3,14 @@
  * This file creates and updates drafts. It does not send mail.
  */
 
+function coverageDraftLine(scanned, documents) {
+  var messages = Number(scanned);
+  var docs = Number(documents);
+  if (!isFinite(messages) || messages < 0) messages = 0;
+  if (!isFinite(docs) || docs < 0) docs = 0;
+  return 'Coverage: ' + messages + ' messages scanned, ' + docs + ' documents.';
+}
+
 function summaryLines_(summary, month) {
   var source = summary || {};
   var lines = ['month: ' + (month || '')];
@@ -42,6 +50,14 @@ function buildAccountantDraft(input) {
   ];
   var summary = summaryLines_(source.summary, month);
   for (var i = 0; i < summary.length; i++) lines.push(summary[i]);
+  var coverage = source.coverage || {};
+  if (coverage.scanned != null || coverage.documents != null) {
+    lines.push(coverageDraftLine(coverage.scanned, coverage.documents));
+  }
+  var notices = source.notices || [];
+  for (i = 0; i < notices.length; i++) {
+    if (notices[i]) lines.push(String(notices[i]));
+  }
   return {
     to: to,
     subject: 'Invoices ' + month,
@@ -102,15 +118,18 @@ function saveAccountantDraft(draft) {
   return { action: 'create', id: created.getId(), to: draft.to, subject: draft.subject };
 }
 
-function draftMonthlyPack(summary, month, links) {
+function draftMonthlyPack(summary, month, links, extra) {
   var config = getConfig();
+  var more = extra || {};
   var draft = buildAccountantDraft({
     to: config.accountant_email,
     month: month,
     folderUrl: links && links.folderUrl,
     sheetUrl: links && links.sheetUrl,
     pdfUrl: links && links.pdfUrl,
-    summary: summary
+    summary: summary,
+    coverage: more.coverage,
+    notices: more.notices
   });
   return saveAccountantDraft(draft);
 }
@@ -118,6 +137,7 @@ function draftMonthlyPack(summary, month, links) {
 if (typeof module !== 'undefined') {
   module.exports = {
     buildAccountantDraft: buildAccountantDraft,
+    coverageDraftLine: coverageDraftLine,
     draftMatches: draftMatches,
     chooseDraftAction: chooseDraftAction
   };

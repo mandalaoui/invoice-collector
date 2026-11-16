@@ -94,6 +94,22 @@ test('initial Settings grid contains each key once', () => {
   assert.equal(grids.RunLog[0][0], 'started_at');
 });
 
+test('the old one-line search default is replaced and a custom query is kept', () => {
+  const legacy = config.LEGACY_SEARCH_QUERIES;
+  const grid = config.gridForSheet('Settings', [
+    ['key', 'value', 'note'],
+    ['search_queries', legacy, 'old']
+  ]);
+  const replaced = grid.find((row) => row[0] === 'search_queries');
+  assert.equal(replaced[1].split('\n').length, 3);
+  assert.equal(replaced[1].includes('filename:pdf'), true);
+  const custom = config.gridForSheet('Settings', [
+    ['key', 'value', 'note'],
+    ['search_queries', 'subject:receipt', 'kept']
+  ]);
+  assert.equal(custom.find((row) => row[0] === 'search_queries')[1], 'subject:receipt');
+});
+
 test('merging Settings keeps edited values and appends missing keys', () => {
   const grid = config.gridForSheet('Settings', [
     ['key', 'value', 'note'],

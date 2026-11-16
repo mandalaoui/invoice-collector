@@ -35,7 +35,7 @@ function clientExtractConfig_(config, month) {
 }
 
 function clientSourceKey_(plan) {
-  if (plan.source === 'body-pdf') return plan.messageId + '#body';
+  if (plan.source === 'email_body' || plan.source === 'body-pdf') return plan.messageId + '#email_body';
   return plan.messageId + '#' + String(plan.attachmentIndex);
 }
 
@@ -58,7 +58,7 @@ function clientAttachments_(message) {
 function readClientSource_(plan) {
   var message = GmailApp.getMessageById(plan.messageId);
   if (!message) throw new Error('Gmail message was not found');
-  if (plan.source === 'body-pdf') {
+  if (plan.source === 'email_body' || plan.source === 'body-pdf') {
     var fileName = buildInvoiceFileName(plan.date, plan.vendor, plan.originalName);
     return { pdfBytes: htmlBodyToPdfBlob(message.getBody(), fileName).getBytes() };
   }
@@ -119,14 +119,24 @@ function collectClientMonth(config, limit) {
   });
   var zone = Session.getScriptTimeZone() || 'Asia/Jerusalem';
   var searched = readClientMessages(plan.queries, zone);
-  var selected = selectCollectMessages(searched.messages, {
+  var partitioned = partitionCollectMessages(searched.messages, {
     month: plan.month,
     processedLabel: source.processed_label
   });
+  var selected = partitioned.kept;
+  var skipped = partitioned.skipped;
   var keptLine = 'gmail kept=' + selected.length + ' month=' + plan.month;
   searched.queryLogs.push(keptLine);
   if (typeof Logger !== 'undefined' && Logger.log) Logger.log(keptLine);
   var plans = planClientSaves(selected);
+  var plannedIds = {};
+  var p;
+  for (p = 0; p < plans.length; p++) plannedIds[plans[p].messageId] = true;
+  for (p = 0; p < selected.length; p++) {
+    if (plannedIds[selected[p].id]) continue;
+    skipped['no invoice attachment or body'] = (skipped['no invoice attachment or body'] || 0) + 1;
+  }
+  var coverage = formatRunCoverage(searched.queryCounts, skipped, searched.messages.length);
   var capped = limitCollectPlans(plans, limit || {});
   var existing = readInvoiceRows();
   var settings = clientExtractConfig_(source, plan.month);
@@ -158,7 +168,9 @@ function collectClientMonth(config, limit) {
     month: plan.month,
     messages: processed,
     rows: written,
-    queryLogs: searched.queryLogs
+    queryLogs: searched.queryLogs,
+    scanned: searched.messages.length,
+    coverage: coverage
   };
 }
 
@@ -179,7 +191,8 @@ function runMonthlyJob() {
     rows: 0,
     errors: '',
     status: 'running',
-    cursor: ''
+    cursor: '',
+    coverage: ''
   };
   var logRow = beginRunLog_(entry);
   try {
@@ -187,6 +200,7 @@ function runMonthlyJob() {
       messageLimit: normalizeBatchSize(config.batch_size, 20)
     });
     entry.messages = collected.messages || 0;
+    entry.coverage = collected.coverage || '';
     var result = publishMonth_(config, month, collected);
     entry.finishedAt = new Date();
     entry.files = result.pages || 0;
@@ -219,6 +233,12 @@ function publishMonth_(config, month, collected) {
     folderUrl: folder.getUrl(),
     sheetUrl: openCollectorSpreadsheet_().getUrl(),
     pdfUrl: pdf.url || ''
+  }, {
+    coverage: {
+      scanned: collected && collected.scanned ? collected.scanned : 0,
+      documents: summary.documents
+    },
+    notices: pdf.notices || []
   });
   return {
     month: month,

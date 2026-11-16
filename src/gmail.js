@@ -182,6 +182,24 @@ function clientAttachmentList_(message) {
   return rows;
 }
 
+function messageBodyText_(message) {
+  var plain = '';
+  var html = '';
+  try {
+    plain = message.getPlainBody ? message.getPlainBody() : '';
+  } catch (ignore) {
+    plain = '';
+  }
+  try {
+    html = message.getBody ? message.getBody() : '';
+  } catch (ignore) {
+    html = '';
+  }
+  plain = String(plain || '');
+  html = String(html || '').replace(/<[^>]+>/g, ' ');
+  return (plain + '\n' + html).trim();
+}
+
 function clientMessagesFromThread_(thread, timeZone) {
   var labels = [];
   var labelObjects = thread.getLabels();
@@ -190,7 +208,7 @@ function clientMessagesFromThread_(thread, timeZone) {
   var rows = [];
   for (var m = 0; m < messages.length; m++) {
     var message = messages[m];
-    var body = String(message.getPlainBody ? message.getPlainBody() : message.getBody() || '');
+    var body = messageBodyText_(message);
     rows.push({
       id: message.getId(),
       threadId: thread.getId(),
@@ -199,7 +217,8 @@ function clientMessagesFromThread_(thread, timeZone) {
       dateYmd: Utilities.formatDate(message.getDate(), timeZone, 'yyyy-MM-dd'),
       labelNames: labels,
       attachments: clientAttachmentList_(message),
-      hasBody: body.trim().length > 0
+      body: body,
+      hasBody: body.length > 0
     });
   }
   return rows;
@@ -210,33 +229,71 @@ function clientMessagesFromThread_(thread, timeZone) {
  * Logs each final query and the number of threads it returned.
  * @param {string[]} queries
  * @param {string} timeZone
- * @return {{messages: Array<Object>, queryLogs: string[]}}
+ * @return {{messages: Array<Object>, queryLogs: string[], queryCounts: number[]}}
  */
 function readClientMessages(queries, timeZone) {
   var list = queries || [];
   var zone = timeZone || 'Asia/Jerusalem';
   var queryLogs = [];
+  var queryCounts = [];
   var found = [];
   var seenThreads = {};
   if (!list.length) {
     var emptyLine = 'gmail queries=0 count=0';
     queryLogs.push(emptyLine);
     if (typeof Logger !== 'undefined' && Logger.log) Logger.log(emptyLine);
-    return { messages: found, queryLogs: queryLogs };
+    return { messages: found, queryLogs: queryLogs, queryCounts: queryCounts };
   }
   for (var q = 0; q < list.length; q++) {
     var threads = searchClientThreads_(list[q]);
     var line = formatGmailQueryLog(list[q], threads.length);
     queryLogs.push(line);
     if (typeof Logger !== 'undefined' && Logger.log) Logger.log(line);
+    var candidates = 0;
     for (var t = 0; t < threads.length; t++) {
       var thread = threads[t];
+      var rows = clientMessagesFromThread_(thread, zone);
+      candidates += rows.length;
       if (seenThreads[thread.getId()]) continue;
       seenThreads[thread.getId()] = true;
-      found = found.concat(clientMessagesFromThread_(thread, zone));
+      found = found.concat(rows);
     }
+    queryCounts.push(candidates);
   }
-  return { messages: found, queryLogs: queryLogs };
+  return { messages: found, queryLogs: queryLogs, queryCounts: queryCounts };
+}
+
+/**
+ * One RunLog cell: candidates per query, messages scanned, skips by reason.
+ * @param {number[]} queryCounts
+ * @param {Object<string, number>} skipped
+ * @param {number} scanned
+ * @return {string}
+ */
+function formatRunCoverage(queryCounts, skipped, scanned) {
+  var bits = [];
+  var counts = queryCounts || [];
+  var i;
+  for (i = 0; i < counts.length; i++) bits.push('q' + (i + 1) + '=' + (Number(counts[i]) || 0));
+  var reasons = Object.keys(skipped || {}).sort();
+  var skipBits = [];
+  var total = 0;
+  for (i = 0; i < reasons.length; i++) {
+    var count = Number(skipped[reasons[i]]) || 0;
+    total += count;
+    skipBits.push(reasons[i] + '=' + count);
+  }
+  var scannedCount = Number(scanned);
+  if (!isFinite(scannedCount) || scannedCount < 0) scannedCount = 0;
+  return (
+    'candidates ' +
+    (bits.join(' ') || '0') +
+    '; scanned ' +
+    scannedCount +
+    '; skipped ' +
+    total +
+    (skipBits.length ? ' (' + skipBits.join(', ') + ')' : '')
+  );
 }
 
 /**
@@ -340,7 +397,15 @@ function hasProcessedLabel_(labelNames, processedLabel) {
  * @param {Object} options month, processedLabel, allowedSubjects
  * @return {Array<Object>}
  */
-function selectCollectMessages(candidates, options) {
+function bumpSkip_(skipped, reason) {
+  skipped[reason] = (skipped[reason] || 0) + 1;
+}
+
+/**
+ * Same filter as selectCollectMessages, plus a count per skip reason.
+ * @return {{kept: Array<Object>, skipped: Object<string, number>}}
+ */
+function partitionCollectMessages(candidates, options) {
   var source = options || {};
   var month = source.month;
   var allowed = null;
@@ -354,15 +419,31 @@ function selectCollectMessages(candidates, options) {
   }
   var seen = {};
   var kept = [];
+  var skipped = {};
   var rows = candidates || [];
   for (var i = 0; i < rows.length; i++) {
     var item = rows[i];
-    if (!item || !item.id || seen[item.id]) continue;
-    if (allowed && !allowed[item.subject]) continue;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(item.dateYmd || '')) continue;
-    if (item.dateYmd.slice(0, 7) !== month) continue;
-    if (!source.includeProcessed && hasProcessedLabel_(item.labelNames, source.processedLabel)) continue;
+    if (!item || !item.id || seen[item.id]) {
+      bumpSkip_(skipped, 'duplicate');
+      continue;
+    }
     seen[item.id] = true;
+    if (allowed && !allowed[item.subject]) {
+      bumpSkip_(skipped, 'not a fixture subject');
+      continue;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(item.dateYmd || '')) {
+      bumpSkip_(skipped, 'no date');
+      continue;
+    }
+    if (item.dateYmd.slice(0, 7) !== month) {
+      bumpSkip_(skipped, 'outside month');
+      continue;
+    }
+    if (!source.includeProcessed && hasProcessedLabel_(item.labelNames, source.processedLabel)) {
+      bumpSkip_(skipped, 'processed label');
+      continue;
+    }
     kept.push(item);
   }
   kept.sort(function (a, b) {
@@ -372,7 +453,11 @@ function selectCollectMessages(candidates, options) {
     if (a.dateYmd !== b.dateYmd) return a.dateYmd < b.dateYmd ? -1 : 1;
     return String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0;
   });
-  return kept;
+  return { kept: kept, skipped: skipped, rank: rank };
+}
+
+function selectCollectMessages(candidates, options) {
+  return partitionCollectMessages(candidates, options).kept;
 }
 
 /**
@@ -560,6 +645,8 @@ if (typeof module !== 'undefined') {
     excludeProcessedTerm: excludeProcessedTerm,
     buildCollectQueries: buildCollectQueries,
     formatGmailQueryLog: formatGmailQueryLog,
+    formatRunCoverage: formatRunCoverage,
+    partitionCollectMessages: partitionCollectMessages,
     readClientMessages: readClientMessages,
     labelClientThreads: labelClientThreads,
     buildFixtureSearchQueries: buildFixtureSearchQueries,

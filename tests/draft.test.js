@@ -30,6 +30,14 @@ test('the draft carries folder, sheet, and pdf links and is never sent', () => {
   assert.ok(built.body.indexOf('https://drive.google.com/file/d/pdf123/view') >= 0);
   assert.ok(built.body.indexOf('total_ILS: 12812') >= 0);
   assert.ok(built.body.indexOf('status_NOT_INVOICE: 1') >= 0);
+  assert.equal(built.body.indexOf('Coverage:'), -1);
+  const covered = draft.buildAccountantDraft({
+    to: 'accountant@example.com',
+    month: '2026-11',
+    summary: summary,
+    coverage: { scanned: 40, documents: 12 }
+  });
+  assert.ok(covered.body.indexOf(draft.coverageDraftLine(40, 12)) >= 0);
   assert.throws(() => draft.buildAccountantDraft({ to: '', month: '2026-11' }), /accountant_email/);
 });
 

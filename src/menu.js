@@ -82,7 +82,8 @@ function testRun() {
     rows: 0,
     errors: '',
     status: 'running',
-    cursor: ''
+    cursor: '',
+    coverage: ''
   };
   try {
     writeInstallEmail_('accountant_email', me);
@@ -91,6 +92,7 @@ function testRun() {
     logRow = beginRunLog_(entry);
     var collected = collectClientMonth(config, { documentLimit: testRunBatchSize() });
     entry.messages = collected.messages || 0;
+    entry.coverage = collected.coverage || '';
     var limited = limitRows_(rowsForMonth(readInvoiceRows(), collected.month || month), testRunBatchSize());
     if (!limited.length) throw noInvoicesError_(collected.month || month, collected);
     var summary = summarizeMonth(limited);
@@ -100,6 +102,12 @@ function testRun() {
       folderUrl: folder.getUrl(),
       sheetUrl: openCollectorSpreadsheet_().getUrl(),
       pdfUrl: pdf.url || ''
+    }, {
+      coverage: {
+        scanned: collected.scanned || 0,
+        documents: summary.documents
+      },
+      notices: pdf.notices || []
     });
     if (String(savedDraft.to || '').toLowerCase().indexOf(me.toLowerCase()) < 0) {
       throw new Error('draft went to ' + savedDraft.to);

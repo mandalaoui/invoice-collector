@@ -56,6 +56,23 @@ function displayNameFromHeader(from) {
   return 'sender';
 }
 
+function bodyHasInvoiceText(text) {
+  var folded = String(text || '')
+    .replace(/[\u200e\u200f\u202a-\u202e]/g, '')
+    .replace(/[״”“]/g, '"')
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+  var cues = ['חשבונית', 'קבלה', 'invoice', 'receipt', 'סה"כ לתשלום', 'total due', 'amount due'];
+  for (var i = 0; i < cues.length; i++) {
+    if (folded.indexOf(cues[i]) >= 0) return true;
+  }
+  return false;
+}
+
+function isBodyPdfSource_(source) {
+  return source === 'body-pdf' || source === 'email_body';
+}
+
 function isCollectableAttachment_(name, mime) {
   var type = String(mime || '')
     .toLowerCase()
@@ -69,7 +86,8 @@ function isCollectableAttachment_(name, mime) {
 
 /**
  * One file per PDF or image on the message. Any subject is kept.
- * A message with no such file and a body is saved as a PDF of that body.
+ * A message with no invoice file is saved as a PDF of the body only when
+ * the body itself contains invoice text. source is email_body.
  * @param {Array<Object>} messages
  * @return {Array<Object>}
  */
@@ -103,7 +121,7 @@ function planClientSaves(messages) {
       });
       added++;
     }
-    if (added || !message.hasBody) continue;
+    if (added || !bodyHasInvoiceText(message.body || message.bodyText || '')) continue;
     plans.push({
       messageId: message.id,
       threadId: message.threadId || '',
@@ -111,7 +129,7 @@ function planClientSaves(messages) {
       from: message.from || '',
       date: date,
       vendor: vendor,
-      source: 'body-pdf',
+      source: 'email_body',
       originalName: 'email.pdf',
       attachmentName: '',
       attachmentIndex: -1,
@@ -421,14 +439,15 @@ function savePlannedCopies(plans, folder, readSource) {
     var plan = rows[i];
     var fileName = buildInvoiceFileName(plan.date, plan.vendor, plan.originalName);
     var source = readSource(plan);
-    var sourceBytes = plan.source === 'body-pdf' ? source.pdfBytes : source.bytes;
+    var bodyPdf = isBodyPdfSource_(plan.source);
+    var sourceBytes = bodyPdf ? source.pdfBytes : source.bytes;
     if (!sourceBytes || !sourceBytes.length) throw new Error('No bytes for ' + plan.subject);
-    if (plan.source === 'body-pdf' && !isPdfBytes(sourceBytes)) {
+    if (bodyPdf && !isPdfBytes(sourceBytes)) {
       throw new Error('Email body PDF is invalid for ' + plan.subject);
     }
     var decision = decideFileWrite(filesNamed_(folder, fileName), fileName, {
       bytes: plan.source === 'attachment' ? sourceBytes : null,
-      mustBePdf: plan.source === 'body-pdf'
+      mustBePdf: bodyPdf
     });
     if (decision.action === 'conflict') {
       throw new Error(
@@ -446,14 +465,14 @@ function savePlannedCopies(plans, folder, readSource) {
       });
       continue;
     }
-    var mime = plan.source === 'body-pdf' ? MimeType.PDF : copyMime(source.mime, plan.attachmentName);
+    var mime = bodyPdf ? MimeType.PDF : copyMime(source.mime, plan.attachmentName);
     var blob = Utilities.newBlob(sourceBytes, mime, fileName);
     var created = folder.createFile(blob);
     var stored = created.getBlob().getBytes();
     if (plan.source === 'attachment' && !bytesEqual(stored, sourceBytes)) {
       throw new Error(fileName + ' changed when it was saved to Drive. The Gmail attachment was not modified.');
     }
-    if (plan.source === 'body-pdf' && !isPdfBytes(stored)) {
+    if (bodyPdf && !isPdfBytes(stored)) {
       throw new Error(fileName + ' saved to Drive is not a PDF');
     }
     saved.push({
@@ -474,6 +493,8 @@ if (typeof module !== 'undefined') {
     buildInvoiceFileName: buildInvoiceFileName,
     planFixtureSaves: planFixtureSaves,
     planClientSaves: planClientSaves,
+    bodyHasInvoiceText: bodyHasInvoiceText,
+    isBodyPdfSource_: isBodyPdfSource_,
     limitCollectPlans: limitCollectPlans,
     clientThreadsToLabel: clientThreadsToLabel,
     displayNameFromHeader: displayNameFromHeader,

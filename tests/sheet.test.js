@@ -106,7 +106,8 @@ test('RunLog rows match the sheet headers and resume only from an open run', () 
     rows: 0,
     errors: '',
     status: 'partial',
-    cursor: 'm2'
+    cursor: 'm2',
+    coverage: 'candidates q1=3; scanned 3; skipped 0'
   });
   assert.deepEqual(row, [
     '2026-11-15T00:00:00',
@@ -117,7 +118,8 @@ test('RunLog rows match the sheet headers and resume only from an open run', () 
     0,
     '',
     'partial',
-    'm2'
+    'm2',
+    'candidates q1=3; scanned 3; skipped 0'
   ]);
   assert.equal(row.length, config.RUN_LOG_HEADERS.length);
   assert.equal(sheet.resumeCursor({ status: 'ok', cursor: 'm8' }), '');

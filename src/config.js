@@ -35,8 +35,12 @@ var RUN_LOG_HEADERS = [
   'rows',
   'errors',
   'status',
-  'cursor'
+  'cursor',
+  'coverage'
 ];
+
+/** Previous one-line default. Setup replaces only this exact cell. */
+var LEGACY_SEARCH_QUERIES = 'has:attachment (חשבונית OR קבלה OR invoice OR receipt)';
 
 var COMPARISON_HEADERS = [
   'field',
@@ -80,9 +84,13 @@ var SETTINGS_FIELDS = [
   },
   {
     key: 'search_queries',
-    value: 'has:attachment (חשבונית OR קבלה OR invoice OR receipt)',
+    value: [
+      'has:attachment (חשבונית OR קבלה OR invoice OR receipt)',
+      '(חשבונית OR קבלה OR invoice OR receipt OR "סה\\"כ לתשלום" OR "total due" OR "amount due")',
+      'has:attachment (filename:pdf OR filename:jpg OR filename:png)'
+    ].join('\n'),
     type: 'lines',
-    note: 'One Gmail search per line. Source: docs/SPEC.md.'
+    note: 'One Gmail search per line. The second line has no has:attachment so an invoice in the body is found.'
   },
   {
     key: 'vendor_whitelist',
@@ -461,7 +469,14 @@ function mergeSettingsGrid(existing) {
     var key = String(row[0] || '').trim();
     if (!key || seen[key]) continue;
     seen[key] = true;
-    rows.push([key, row.length > 1 && row[1] != null ? row[1] : '', row.length > 2 && row[2] != null ? row[2] : '']);
+    var keptValue = row.length > 1 && row[1] != null ? row[1] : '';
+    var keptNote = row.length > 2 && row[2] != null ? row[2] : '';
+    if (key === 'search_queries' && String(keptValue).trim() === LEGACY_SEARCH_QUERIES) {
+      var replacement = defaultSettingsMap_().search_queries;
+      keptValue = replacement.value;
+      keptNote = replacement.note;
+    }
+    rows.push([key, keptValue, keptNote]);
   }
   for (var n = 0; n < SETTINGS_FIELDS.length; n++) {
     var field = SETTINGS_FIELDS[n];
@@ -502,6 +517,7 @@ if (typeof module !== 'undefined') {
     ANSWER_KEY_HEADERS: ANSWER_KEY_HEADERS,
     SETTINGS_HEADERS: SETTINGS_HEADERS,
     SETTINGS_FIELDS: SETTINGS_FIELDS,
+    LEGACY_SEARCH_QUERIES: LEGACY_SEARCH_QUERIES,
     USER_INPUT_KEYS: USER_INPUT_KEYS,
     headersFor: headersFor,
     getConfig: getConfig,

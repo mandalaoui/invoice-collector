@@ -165,14 +165,28 @@ function buildRunLogRow(entry) {
     source.rows || 0,
     source.errors == null ? '' : source.errors,
     source.status == null ? '' : source.status,
-    source.cursor == null ? '' : source.cursor
+    source.cursor == null ? '' : source.cursor,
+    source.coverage == null ? '' : source.coverage
   ];
+}
+
+function ensureHeaderRow_(sheet, headers) {
+  if (!sheet || sheet.getLastRow() === 0) {
+    sheet.appendRow(headers.slice());
+    return;
+  }
+  var current = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
+  var same = true;
+  for (var i = 0; i < headers.length; i++) {
+    if (String(current[i] || '') !== headers[i]) same = false;
+  }
+  if (!same) sheet.getRange(1, 1, 1, headers.length).setValues([headers.slice()]);
 }
 
 function runLogSheet_() {
   var sheet = openCollectorSpreadsheet_().getSheetByName('RunLog');
   if (!sheet) throw new Error('RunLog tab is missing. Run setupCollectorSheet().');
-  if (sheet.getLastRow() === 0) sheet.appendRow(RUN_LOG_HEADERS.slice());
+  ensureHeaderRow_(sheet, RUN_LOG_HEADERS);
   return sheet;
 }
 

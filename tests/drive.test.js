@@ -61,6 +61,34 @@ test('a client message with three pdfs is saved without a fixture subject list',
   assert.deepEqual(drive.clientThreadsToLabel(plans, plans.slice(0, 2)), []);
 });
 
+test('an invoice in the body is saved when there is no invoice file', () => {
+  const invoiceBody = {
+    id: 'm-body',
+    threadId: 't-body',
+    subject: 'חשבונית',
+    from: 'Accounts <accounts@vendor.example>',
+    dateYmd: '2026-11-16',
+    body: 'שלום\nסה"כ לתשלום: 100.00',
+    attachments: [{ index: 0, name: 'notes.zip', mime: 'application/zip' }]
+  };
+  const plans = drive.planClientSaves([invoiceBody]);
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0].source, 'email_body');
+  assert.equal(plans[0].originalName, 'email.pdf');
+  const chat = drive.planClientSaves([{
+    id: 'm-chat',
+    subject: 'hello',
+    from: 'Ada <ada@example.com>',
+    dateYmd: '2026-11-16',
+    body: 'See you tomorrow',
+    hasBody: true,
+    attachments: []
+  }]);
+  assert.equal(chat.length, 0);
+  assert.equal(drive.bodyHasInvoiceText('Total due 12'), true);
+  assert.equal(drive.bodyHasInvoiceText('no numbers here'), false);
+});
+
 test('plans copy the eight fixtures and render only the email body as PDF', () => {
   const plans = drive.planFixtureSaves(
     listed([7, 0, 5], { id: 'other', subject: 'Your bank statement', date: '2026-11-02' }),
