@@ -24,7 +24,8 @@ var INVOICE_HEADERS = [
   'file_link',
   'confidence',
   'status',
-  'notes'
+  'notes',
+  'extract_version'
 ];
 
 var RUN_LOG_HEADERS = [
@@ -42,6 +43,59 @@ var RUN_LOG_HEADERS = [
 
 /** Previous one-line default. Setup replaces only this exact cell. */
 var LEGACY_SEARCH_QUERIES = 'has:attachment (חשבונית OR קבלה OR invoice OR receipt)';
+
+/** Coverage v1 default. Setup replaces only this exact cell. */
+var PREVIOUS_SEARCH_QUERIES = [
+  'has:attachment (חשבונית OR קבלה OR invoice OR receipt)',
+  '(חשבונית OR קבלה OR invoice OR receipt OR "סה\\"כ לתשלום" OR "total due" OR "amount due")',
+  'has:attachment (filename:pdf OR filename:jpg OR filename:png)'
+].join('\n');
+
+function quoteSearchTerm_(term) {
+  var text = String(term || '').trim();
+  if (!text || text.charAt(0) === '"') return text;
+  if (/[\s()]/.test(text)) return '"' + text + '"';
+  return text;
+}
+
+function invoiceSearchGroup_(extra) {
+  var terms = [
+    'חשבונית',
+    'החשבונית',
+    'חשבוניתך',
+    'לחשבונית',
+    'קבלה',
+    'הקבלה',
+    'קבלתך',
+    'invoice',
+    'receipt',
+    'billing',
+    'subscription',
+    'renews',
+    'payment',
+    'order confirmation',
+    'הזמנה',
+    'תשלום'
+  ];
+  var parts = [];
+  var i;
+  for (i = 0; i < terms.length; i++) parts.push(quoteSearchTerm_(terms[i]));
+  var more = extra || [];
+  for (i = 0; i < more.length; i++) parts.push(more[i]);
+  return '(' + parts.join(' OR ') + ')';
+}
+
+function defaultSearchQueriesValue() {
+  return [
+    'has:attachment ' + invoiceSearchGroup_([]),
+    invoiceSearchGroup_(['"סה\\"כ לתשלום"', '"total due"', '"amount due"']),
+    'has:attachment (filename:pdf OR filename:jpg OR filename:png)'
+  ].join('\n');
+}
+
+function sameSettingText_(left, right) {
+  return String(left || '').replace(/\r\n/g, '\n').trim() === String(right || '').replace(/\r\n/g, '\n').trim();
+}
 
 var COMPARISON_HEADERS = [
   'field',
@@ -85,11 +139,7 @@ var SETTINGS_FIELDS = [
   },
   {
     key: 'search_queries',
-    value: [
-      'has:attachment (חשבונית OR קבלה OR invoice OR receipt)',
-      '(חשבונית OR קבלה OR invoice OR receipt OR "סה\\"כ לתשלום" OR "total due" OR "amount due")',
-      'has:attachment (filename:pdf OR filename:jpg OR filename:png)'
-    ].join('\n'),
+    value: defaultSearchQueriesValue(),
     type: 'lines',
     note: 'One Gmail search per line. The second line has no has:attachment so an invoice in the body is found.'
   },
@@ -472,7 +522,10 @@ function mergeSettingsGrid(existing) {
     seen[key] = true;
     var keptValue = row.length > 1 && row[1] != null ? row[1] : '';
     var keptNote = row.length > 2 && row[2] != null ? row[2] : '';
-    if (key === 'search_queries' && String(keptValue).trim() === LEGACY_SEARCH_QUERIES) {
+    if (
+      key === 'search_queries' &&
+      (sameSettingText_(keptValue, LEGACY_SEARCH_QUERIES) || sameSettingText_(keptValue, PREVIOUS_SEARCH_QUERIES))
+    ) {
       var replacement = defaultSettingsMap_().search_queries;
       keptValue = replacement.value;
       keptNote = replacement.note;
@@ -519,6 +572,8 @@ if (typeof module !== 'undefined') {
     SETTINGS_HEADERS: SETTINGS_HEADERS,
     SETTINGS_FIELDS: SETTINGS_FIELDS,
     LEGACY_SEARCH_QUERIES: LEGACY_SEARCH_QUERIES,
+    PREVIOUS_SEARCH_QUERIES: PREVIOUS_SEARCH_QUERIES,
+    defaultSearchQueriesValue: defaultSearchQueriesValue,
     USER_INPUT_KEYS: USER_INPUT_KEYS,
     headersFor: headersFor,
     getConfig: getConfig,

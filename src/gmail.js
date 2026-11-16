@@ -182,6 +182,16 @@ function clientAttachmentList_(message) {
   return rows;
 }
 
+function textWithLinks(plain, html) {
+  var source = String(html || '');
+  var hrefs = [];
+  var re = /href\s*=\s*["']([^"']+)["']/gi;
+  var match;
+  while ((match = re.exec(source))) hrefs.push(match[1]);
+  var stripped = source.replace(/<[^>]+>/g, ' ');
+  return (String(plain || '') + '\n' + stripped + '\n' + hrefs.join('\n')).trim();
+}
+
 function messageBodyText_(message) {
   var plain = '';
   var html = '';
@@ -195,9 +205,67 @@ function messageBodyText_(message) {
   } catch (ignore) {
     html = '';
   }
-  plain = String(plain || '');
-  html = String(html || '').replace(/<[^>]+>/g, ' ');
-  return (plain + '\n' + html).trim();
+  return textWithLinks(plain, html);
+}
+
+function mergeClientMessages(primary, extra) {
+  var seen = {};
+  var out = [];
+  var lists = [primary || [], extra || []];
+  var a;
+  var i;
+  for (a = 0; a < lists.length; a++) {
+    for (i = 0; i < lists[a].length; i++) {
+      var item = lists[a][i];
+      if (!item || !item.id || seen[item.id]) continue;
+      seen[item.id] = true;
+      out.push(item);
+    }
+  }
+  return out;
+}
+
+function fetchMessagesById(ids, timeZone) {
+  var zone = timeZone || 'Asia/Jerusalem';
+  var out = [];
+  var seen = {};
+  var list = ids || [];
+  var i;
+  for (i = 0; i < list.length; i++) {
+    var id = String(list[i] || '');
+    if (!id || seen[id]) continue;
+    seen[id] = true;
+    var message = null;
+    try {
+      message = GmailApp.getMessageById(id);
+    } catch (ignore) {
+      message = null;
+    }
+    if (!message) continue;
+    var labels = [];
+    var threadId = '';
+    try {
+      var thread = message.getThread();
+      threadId = thread.getId();
+      var labelObjects = thread.getLabels();
+      for (var n = 0; n < labelObjects.length; n++) labels.push(labelObjects[n].getName());
+    } catch (ignore) {
+      labels = [];
+    }
+    var body = messageBodyText_(message);
+    out.push({
+      id: message.getId(),
+      threadId: threadId,
+      subject: message.getSubject(),
+      from: message.getFrom(),
+      dateYmd: Utilities.formatDate(message.getDate(), zone, 'yyyy-MM-dd'),
+      labelNames: labels,
+      attachments: clientAttachmentList_(message),
+      body: body,
+      hasBody: body.length > 0
+    });
+  }
+  return out;
 }
 
 function clientMessagesFromThread_(thread, timeZone) {
@@ -646,6 +714,8 @@ if (typeof module !== 'undefined') {
     buildCollectQueries: buildCollectQueries,
     formatGmailQueryLog: formatGmailQueryLog,
     formatRunCoverage: formatRunCoverage,
+    textWithLinks: textWithLinks,
+    mergeClientMessages: mergeClientMessages,
     partitionCollectMessages: partitionCollectMessages,
     readClientMessages: readClientMessages,
     labelClientThreads: labelClientThreads,

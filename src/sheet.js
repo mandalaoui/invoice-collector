@@ -237,6 +237,50 @@ function invoiceSourceId(source) {
   return text.split(/\s+/)[0];
 }
 
+function messageIdFromSource(source) {
+  var id = invoiceSourceId(source);
+  var at = id.indexOf('#');
+  return at < 0 ? id : id.slice(0, at);
+}
+
+function messageVersionStale(rows, messageId, version) {
+  var wanted = String(version == null ? '' : version);
+  var list = rows || [];
+  var i;
+  for (i = 0; i < list.length; i++) {
+    if (messageIdFromSource(list[i] && list[i].source) !== messageId) continue;
+    var current = list[i].extract_version == null ? '' : String(list[i].extract_version).trim();
+    if (current !== wanted) return true;
+  }
+  return false;
+}
+
+function staleMessageIds(rows, version) {
+  var seen = {};
+  var out = [];
+  var list = rows || [];
+  var i;
+  for (i = 0; i < list.length; i++) {
+    var id = messageIdFromSource(list[i] && list[i].source);
+    if (!id || seen[id]) continue;
+    if (!messageVersionStale(list, id, version)) continue;
+    seen[id] = true;
+    out.push(id);
+  }
+  return out;
+}
+
+function sourcesForMessage(rows, messageId) {
+  var out = [];
+  var list = rows || [];
+  for (var i = 0; i < list.length; i++) {
+    if (messageIdFromSource(list[i] && list[i].source) !== messageId) continue;
+    var id = invoiceSourceId(list[i].source);
+    if (id) out.push(id);
+  }
+  return out;
+}
+
 function invoiceDocKey(row) {
   var vendor = row && row.vendor_id != null ? String(row.vendor_id).trim() : '';
   var number = row && row.doc_number != null ? String(row.doc_number).trim() : '';
@@ -249,19 +293,34 @@ function invoiceDocKey(row) {
  * document number is kept once and marked DUPLICATE.
  * @return {Array<Object>}
  */
-function planInvoiceRows(existing, incoming) {
+function planInvoiceRows(existing, incoming, version) {
+  var replace = {};
+  var batch = incoming || [];
+  if (version != null && version !== '') {
+    var ids = {};
+    var n;
+    for (n = 0; n < batch.length; n++) {
+      var mid = messageIdFromSource(batch[n] && batch[n].source);
+      if (mid) ids[mid] = true;
+    }
+    var keys = Object.keys(ids);
+    for (n = 0; n < keys.length; n++) {
+      if (messageVersionStale(existing, keys[n], version)) replace[keys[n]] = true;
+    }
+  }
   var seenSource = {};
   var seenDoc = {};
   var rows = existing || [];
   var i;
   for (i = 0; i < rows.length; i++) {
+    var existingId = messageIdFromSource(rows[i] && rows[i].source);
+    if (replace[existingId]) continue;
     var sourceId = invoiceSourceId(rows[i] && rows[i].source);
     if (sourceId) seenSource[sourceId] = true;
     var docKey = invoiceDocKey(rows[i]);
     if (docKey) seenDoc[docKey] = true;
   }
   var writes = [];
-  var batch = incoming || [];
   for (i = 0; i < batch.length; i++) {
     var row = batch[i] || {};
     var id = invoiceSourceId(row.source);
@@ -270,6 +329,7 @@ function planInvoiceRows(existing, incoming) {
     var copy = {};
     var fields = Object.keys(row);
     for (var k = 0; k < fields.length; k++) copy[fields[k]] = row[fields[k]];
+    if (version != null && version !== '') copy.extract_version = version;
     if (key && seenDoc[key]) copy.status = 'DUPLICATE';
     writes.push(copy);
     if (id) seenSource[id] = true;
@@ -316,7 +376,13 @@ function sheetDateValue(value) {
 
 function invoiceNumberFormat(key) {
   if (key === 'doc_date') return SHEET_DATE_FORMAT;
-  if (key === 'vendor_id' || key === 'doc_number' || key === 'allocation_number' || key === 'source') {
+  if (
+    key === 'vendor_id' ||
+    key === 'doc_number' ||
+    key === 'allocation_number' ||
+    key === 'source' ||
+    key === 'extract_version'
+  ) {
     return '@';
   }
   return 'General';
@@ -406,9 +472,48 @@ function readInvoiceRows() {
  * Appends rows that are not already on the sheet. A second call adds nothing.
  * @return {{added: number, skipped: number}}
  */
+function deleteInvoiceSources_(sourceIds) {
+  var wanted = {};
+  var list = sourceIds || [];
+  var i;
+  for (i = 0; i < list.length; i++) wanted[String(list[i] || '')] = true;
+  var sheet = invoiceSheet_();
+  if (sheet.getLastRow() < 2) return 0;
+  var values = sheet.getDataRange().getValues();
+  var sourceCol = -1;
+  for (i = 0; i < values[0].length; i++) {
+    if (String(values[0][i]) === 'source') sourceCol = i;
+  }
+  if (sourceCol < 0) return 0;
+  var removed = 0;
+  for (var r = values.length - 1; r >= 1; r--) {
+    if (!wanted[invoiceSourceId(values[r][sourceCol])]) continue;
+    sheet.deleteRow(r + 1);
+    removed++;
+  }
+  return removed;
+}
+
 function appendInvoiceRows(rows) {
   var incoming = rows || [];
-  var writes = planInvoiceRows(readInvoiceRows(), incoming);
+  var existing = readInvoiceRows();
+  var version = typeof EXTRACT_VERSION === 'undefined' ? '' : EXTRACT_VERSION;
+  if (version) {
+    var drop = [];
+    var seen = {};
+    var i;
+    for (i = 0; i < incoming.length; i++) {
+      var mid = messageIdFromSource(incoming[i] && incoming[i].source);
+      if (!mid || seen[mid] || !messageVersionStale(existing, mid, version)) continue;
+      seen[mid] = true;
+      drop = drop.concat(sourcesForMessage(existing, mid));
+    }
+    if (drop.length) {
+      deleteInvoiceSources_(drop);
+      existing = readInvoiceRows();
+    }
+  }
+  var writes = planInvoiceRows(existing, incoming, version || undefined);
   if (!writes.length) return { added: 0, skipped: incoming.length };
   var sheet = invoiceSheet_();
   var grid = writes.map(buildInvoiceRow);
@@ -433,6 +538,10 @@ if (typeof module !== 'undefined') {
     resumeCursor: resumeCursor,
     buildRunLogRow: buildRunLogRow,
     invoiceSourceId: invoiceSourceId,
+    messageIdFromSource: messageIdFromSource,
+    messageVersionStale: messageVersionStale,
+    staleMessageIds: staleMessageIds,
+    sourcesForMessage: sourcesForMessage,
     planInvoiceRows: planInvoiceRows,
     buildInvoiceRow: buildInvoiceRow,
     mergeInvoiceNote_: mergeInvoiceNote_,

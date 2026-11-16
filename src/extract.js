@@ -1,3 +1,6 @@
+/** Bump when extraction or coverage rules change so stored rows are rewritten. */
+var EXTRACT_VERSION = '2';
+
 /**
  * Pure extraction. Text in, fields and confidence out.
  * Keywords, the company id, the VAT rate, and the month come from config
@@ -641,6 +644,28 @@ function moneyClose_(left, right, tolerance) {
  * @param {Array<Object>=} existing rows already stored; same vendor_id + doc_number is a duplicate
  * @return {{status: string, reasons: string[]}}
  */
+/**
+ * Order confirmation or subscription mail that never becomes an invoice.
+ * @return {{status: string, notes: string}|null}
+ */
+function noticeWithoutInvoice(text) {
+  var sample = String(text || '');
+  var notice =
+    phraseHits_(sample, 'order confirmation') ||
+    phraseHits_(sample, 'subscription') ||
+    phraseHits_(sample, 'renews') ||
+    phraseHits_(sample, 'renewal') ||
+    phraseHits_(sample, 'payment') ||
+    phraseHits_(sample, 'הזמנה');
+  var invoice =
+    phraseHits_(sample, 'חשבונית') ||
+    phraseHits_(sample, 'קבלה') ||
+    phraseHits_(sample, 'invoice') ||
+    phraseHits_(sample, 'receipt');
+  if (!notice || invoice) return null;
+  return { status: 'NOT_INVOICE', notes: 'check for invoice' };
+}
+
 function classifyInvoice(fields, config, existing) {
   var settings = config || {};
   var doc = fields || {};
@@ -702,9 +727,11 @@ function duplicateInvoice_(fields, existing) {
 
 if (typeof module !== 'undefined') {
   module.exports = {
+    EXTRACT_VERSION: EXTRACT_VERSION,
     normalizeExtractText: normalizeExtractText,
     extractInvoice: extractInvoice,
     keywordPages: keywordPages,
+    noticeWithoutInvoice: noticeWithoutInvoice,
     classifyInvoice: classifyInvoice
   };
 }

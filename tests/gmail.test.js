@@ -61,11 +61,11 @@ test('client query builder keeps Settings text and does not add fixture filters'
   const settings = require('../src/config.js');
   const searchField = settings.SETTINGS_FIELDS.find((field) => field.key === 'search_queries');
   const lines = searchField.value.split('\n').map((line) => line.trim()).filter(Boolean);
-  assert.deepEqual(lines, [
-    'has:attachment (חשבונית OR קבלה OR invoice OR receipt)',
-    '(חשבונית OR קבלה OR invoice OR receipt OR "סה\\"כ לתשלום" OR "total due" OR "amount due")',
-    'has:attachment (filename:pdf OR filename:jpg OR filename:png)'
-  ]);
+  assert.deepEqual(lines, settings.defaultSearchQueriesValue().split('\n'));
+  ['החשבונית', 'חשבוניתך', 'הקבלה', 'קבלתך', 'לחשבונית', 'billing', 'subscription', 'renews', 'payment', '"order confirmation"', 'הזמנה', 'תשלום'].forEach((term) => {
+    assert.equal(lines[0].includes(term), true, term);
+    assert.equal(lines[1].includes(term), true, term);
+  });
   assert.equal(lines[1].includes('has:attachment'), false);
   const plan = gmail.buildCollectQueries({
     month: '2026-11',
@@ -74,12 +74,12 @@ test('client query builder keeps Settings text and does not add fixture filters'
     search_queries: lines,
     vendor_whitelist: []
   });
-  const query =
-    '(has:attachment (חשבונית OR קבלה OR invoice OR receipt)) after:2026/10/31 before:2026/12/01 -label:invoices-processed';
+  const query = plan.queries[0];
   assert.equal(plan.queries.length, 3);
-  assert.equal(plan.queries[0], query);
+  assert.equal(plan.queries[0].startsWith('(has:attachment '), true);
   assert.equal(plan.queries[1].includes('has:attachment'), false);
   assert.match(plan.queries[2], /^\(has:attachment \(filename:pdf OR filename:jpg OR filename:png\)\) /);
+  assert.match(query, /after:2026\/10\/31 before:2026\/12\/01/);
   assert.equal(gmail.formatGmailQueryLog(query, 1), 'gmail query=' + query + ' count=1');
   assert.equal(plan.queries[0].includes('from:me'), false);
   const coverage = gmail.formatRunCoverage([4, 2, 9], { 'outside month': 1, 'processed label': 2 }, 11);

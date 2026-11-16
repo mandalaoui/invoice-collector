@@ -73,6 +73,139 @@ function isBodyPdfSource_(source) {
   return source === 'body-pdf' || source === 'email_body';
 }
 
+function textUrlPath_(url) {
+  var text = String(url || '').trim();
+  var hash = text.indexOf('#');
+  if (hash >= 0) text = text.slice(0, hash);
+  var query = text.indexOf('?');
+  if (query >= 0) text = text.slice(0, query);
+  return text;
+}
+
+function isPdfUrl_(url) {
+  return /\.pdf$/i.test(textUrlPath_(url));
+}
+
+function decodeUrlPart_(text) {
+  try {
+    return decodeURIComponent(String(text || ''));
+  } catch (ignore) {
+    return String(text || '');
+  }
+}
+
+function extractHttpUrls_(text) {
+  var found = [];
+  var re = /https?:\/\/[^\s<>"'()]+/gi;
+  var source = String(text || '');
+  var match;
+  while ((match = re.exec(source))) found.push(match[0].replace(/[.,;]+$/, ''));
+  return found;
+}
+
+function isInvoiceLink_(url) {
+  if (isPdfUrl_(url)) return true;
+  var path = decodeUrlPart_(textUrlPath_(url)).toLowerCase();
+  if (/invoice|receipt|billing|statement|subscription|payment|download/.test(path)) return true;
+  return /חשבונית|קבלה|הזמנה|תשלום/.test(path);
+}
+
+function findInvoiceLinks(text) {
+  var urls = extractHttpUrls_(text);
+  var out = [];
+  var seen = {};
+  for (var i = 0; i < urls.length; i++) {
+    if (!isInvoiceLink_(urls[i]) || seen[urls[i]]) continue;
+    seen[urls[i]] = true;
+    out.push(urls[i]);
+  }
+  return out;
+}
+
+function linkFileName_(url, index) {
+  var path = decodeUrlPart_(textUrlPath_(url));
+  var slash = path.lastIndexOf('/');
+  var base = slash >= 0 ? path.slice(slash + 1) : '';
+  if (!/\.pdf$/i.test(base)) base = 'link-' + (Number(index) + 1) + '.pdf';
+  return base || 'link.pdf';
+}
+
+function linkNeedsLogin_(response) {
+  if (!response) return true;
+  var status = Number(response.status);
+  if (status === 401 || status === 403) return true;
+  var finalUrl = String(response.finalUrl || '');
+  if (/login|signin|sign-in|oauth|accounts\.google/i.test(finalUrl)) return true;
+  var type = String(response.contentType || '').toLowerCase();
+  var body = String(response.bodyText || '');
+  if (type.indexOf('html') >= 0 && /login|sign in|log in|password|התחבר|כניסה|סיסמה/i.test(body)) return true;
+  return false;
+}
+
+/**
+ * A direct PDF is saved. Login or any other response is a review note.
+ * @return {{action: string, url: string, note?: string, bytes?: number[], fileName?: string}}
+ */
+function interpretLinkFetch(url, response, index) {
+  var note = 'invoice behind link: ' + url;
+  if (linkNeedsLogin_(response)) return { action: 'review', note: note, url: url };
+  var type = String(response.contentType || '').toLowerCase();
+  var pdfType = type.indexOf('application/pdf') >= 0;
+  var pdfUrl = isPdfUrl_(url) || isPdfUrl_(response.finalUrl || '');
+  var bytes = response.bytes || [];
+  var status = response.status == null || response.status === '' ? 200 : Number(response.status);
+  var ok = status >= 200 && status < 300;
+  if (ok && isPdfBytes(bytes) && (pdfType || pdfUrl)) {
+    return { action: 'save', url: url, bytes: bytes, fileName: linkFileName_(url, index || 0) };
+  }
+  return { action: 'review', note: note, url: url };
+}
+
+function linkSourceKey(plan) {
+  var source = plan || {};
+  return String(source.messageId || '') + '#' + String(source.linkIndex) + '#link';
+}
+
+function fetchInvoiceLink_(url) {
+  var response = UrlFetchApp.fetch(url, { muteHttpExceptions: true, followRedirects: true });
+  var headers = response.getHeaders() || {};
+  var contentType = headers['Content-Type'] || headers['content-type'] || '';
+  var bodyText = '';
+  if (String(contentType).toLowerCase().indexOf('text/') === 0) {
+    try {
+      bodyText = String(response.getContentText() || '').slice(0, 4000);
+    } catch (ignore) {
+      bodyText = '';
+    }
+  }
+  return {
+    status: response.getResponseCode(),
+    contentType: contentType,
+    finalUrl: headers.Location || headers.location || '',
+    bytes: response.getContent(),
+    bodyText: bodyText
+  };
+}
+
+function responsesForMessage_(message) {
+  var links = findInvoiceLinks(message && (message.body || message.bodyText) || '');
+  var out = {};
+  for (var i = 0; i < links.length; i++) {
+    try {
+      out[links[i]] = fetchInvoiceLink_(links[i]);
+    } catch (error) {
+      out[links[i]] = {
+        status: 0,
+        contentType: '',
+        finalUrl: '',
+        bytes: [],
+        bodyText: error && error.message ? String(error.message) : ''
+      };
+    }
+  }
+  return out;
+}
+
 function isCollectableAttachment_(name, mime) {
   var type = String(mime || '')
     .toLowerCase()
@@ -137,6 +270,105 @@ function planClientSaves(messages) {
     });
   }
   return plans;
+}
+
+/**
+ * File plans plus review rows and notice rows.
+ * A saved PDF link replaces an email-body PDF for that message.
+ * classifyNotice(text) returns {status, notes} or null.
+ * @return {{plans: Array<Object>}}
+ */
+function buildCollectWork(messages, responsesByMessageId, classifyNotice) {
+  var plans = planClientSaves(messages);
+  var responses = responsesByMessageId || {};
+  var classify = classifyNotice || function () { return null; };
+  var extra = [];
+  var rows = [];
+  var dropBody = {};
+  var list = messages || [];
+  var i;
+  for (i = 0; i < list.length; i++) {
+    var message = list[i];
+    if (!message || !message.id) continue;
+    var map = responses[message.id] || {};
+    var links = findInvoiceLinks(message.body || message.bodyText || '');
+    var saved = false;
+    var reviewed = false;
+    var n;
+    for (n = 0; n < links.length; n++) {
+      var outcome = interpretLinkFetch(links[n], map[links[n]], n);
+      if (outcome.action === 'save') {
+        saved = true;
+        extra.push({
+          messageId: message.id,
+          threadId: message.threadId || '',
+          subject: message.subject || '',
+          from: message.from || '',
+          date: message.dateYmd || message.date || '',
+          vendor: displayNameFromHeader(message.from),
+          source: 'link',
+          originalName: outcome.fileName,
+          attachmentName: outcome.fileName,
+          attachmentIndex: -1,
+          linkIndex: n,
+          bytes: outcome.bytes,
+          order: extra.length
+        });
+      } else {
+        reviewed = true;
+        rows.push({
+          rowOnly: true,
+          messageId: message.id,
+          threadId: message.threadId || '',
+          source: 'link',
+          linkIndex: n,
+          sourceKey: message.id + '#' + n + '#link',
+          fields: {
+            vendor_name: displayNameFromHeader(message.from),
+            doc_date: message.dateYmd || message.date || '',
+            status: 'REVIEW',
+            notes: outcome.note,
+            source: message.id + '#' + n + '#link',
+            confidence: 0
+          }
+        });
+      }
+    }
+    if (saved) dropBody[message.id] = true;
+    var hasFile = saved;
+    for (n = 0; n < plans.length; n++) {
+      if (plans[n].messageId === message.id && plans[n].source !== 'email_body' && plans[n].source !== 'body-pdf') {
+        hasFile = true;
+      }
+    }
+    if (!hasFile && !reviewed) {
+      var sample = String(message.subject || '') + '\n' + String(message.body || message.bodyText || '');
+      var notice = classify(sample);
+      if (notice) {
+        rows.push({
+          rowOnly: true,
+          messageId: message.id,
+          threadId: message.threadId || '',
+          source: 'notice',
+          sourceKey: message.id + '#notice',
+          fields: {
+            vendor_name: displayNameFromHeader(message.from),
+            doc_date: message.dateYmd || message.date || '',
+            status: notice.status,
+            notes: notice.notes,
+            source: message.id + '#notice',
+            confidence: 0
+          }
+        });
+      }
+    }
+  }
+  var kept = [];
+  for (i = 0; i < plans.length; i++) {
+    if (dropBody[plans[i].messageId] && isBodyPdfSource_(plans[i].source)) continue;
+    kept.push(plans[i]);
+  }
+  return { plans: kept.concat(extra).concat(rows) };
 }
 
 /**
@@ -445,9 +677,10 @@ function savePlannedCopies(plans, folder, readSource) {
     if (bodyPdf && !isPdfBytes(sourceBytes)) {
       throw new Error('Email body PDF is invalid for ' + plan.subject);
     }
+    var copiedBytes = plan.source === 'attachment' || plan.source === 'link';
     var decision = decideFileWrite(filesNamed_(folder, fileName), fileName, {
-      bytes: plan.source === 'attachment' ? sourceBytes : null,
-      mustBePdf: bodyPdf
+      bytes: copiedBytes ? sourceBytes : null,
+      mustBePdf: bodyPdf || plan.source === 'link'
     });
     if (decision.action === 'conflict') {
       throw new Error(
@@ -460,7 +693,7 @@ function savePlannedCopies(plans, folder, readSource) {
         id: decision.id,
         bytes: sourceBytes.length,
         source: plan.source,
-        byteIdentical: plan.source === 'attachment',
+        byteIdentical: copiedBytes,
         created: false
       });
       continue;
@@ -469,7 +702,7 @@ function savePlannedCopies(plans, folder, readSource) {
     var blob = Utilities.newBlob(sourceBytes, mime, fileName);
     var created = folder.createFile(blob);
     var stored = created.getBlob().getBytes();
-    if (plan.source === 'attachment' && !bytesEqual(stored, sourceBytes)) {
+    if (copiedBytes && !bytesEqual(stored, sourceBytes)) {
       throw new Error(fileName + ' changed when it was saved to Drive. The Gmail attachment was not modified.');
     }
     if (bodyPdf && !isPdfBytes(stored)) {
@@ -480,7 +713,7 @@ function savePlannedCopies(plans, folder, readSource) {
       id: created.getId(),
       bytes: stored.length,
       source: plan.source,
-      byteIdentical: plan.source === 'attachment',
+      byteIdentical: copiedBytes,
       created: true
     });
   }
@@ -493,6 +726,10 @@ if (typeof module !== 'undefined') {
     buildInvoiceFileName: buildInvoiceFileName,
     planFixtureSaves: planFixtureSaves,
     planClientSaves: planClientSaves,
+    findInvoiceLinks: findInvoiceLinks,
+    interpretLinkFetch: interpretLinkFetch,
+    linkSourceKey: linkSourceKey,
+    buildCollectWork: buildCollectWork,
     bodyHasInvoiceText: bodyHasInvoiceText,
     isBodyPdfSource_: isBodyPdfSource_,
     limitCollectPlans: limitCollectPlans,

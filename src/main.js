@@ -35,7 +35,9 @@ function clientExtractConfig_(config, month) {
 }
 
 function clientSourceKey_(plan) {
+  if (plan.rowOnly) return plan.sourceKey || (plan.fields && plan.fields.source) || '';
   if (plan.source === 'email_body' || plan.source === 'body-pdf') return plan.messageId + '#email_body';
+  if (plan.source === 'link') return linkSourceKey(plan);
   return plan.messageId + '#' + String(plan.attachmentIndex);
 }
 
@@ -58,6 +60,9 @@ function clientAttachments_(message) {
 function readClientSource_(plan) {
   var message = GmailApp.getMessageById(plan.messageId);
   if (!message) throw new Error('Gmail message was not found');
+  if (plan.source === 'link' && plan.bytes && plan.bytes.length) {
+    return { bytes: plan.bytes, mime: 'application/pdf' };
+  }
   if (plan.source === 'email_body' || plan.source === 'body-pdf') {
     var fileName = buildInvoiceFileName(plan.date, plan.vendor, plan.originalName);
     return { pdfBytes: htmlBodyToPdfBlob(message.getBody(), fileName).getBytes() };
@@ -94,6 +99,12 @@ function storeClientPlan_(plan, month, settings, existing, folder, config) {
     senderName: plan.vendor
   });
   fields.status = classifyInvoice(fields, settings, existing).status;
+  var notice = noticeWithoutInvoice(read.text);
+  if (notice) {
+    fields.status = notice.status;
+    fields.notes = notice.notes;
+  }
+  fields.extract_version = EXTRACT_VERSION;
   fields.source = clientSourceKey_(plan);
   fields.file_link = file.getUrl();
   appendInvoiceRows([fields]);
@@ -118,17 +129,24 @@ function collectClientMonth(config, limit) {
     vendor_whitelist: source.vendor_whitelist
   });
   var zone = Session.getScriptTimeZone() || 'Asia/Jerusalem';
+  var existing = readInvoiceRows();
   var searched = readClientMessages(plan.queries, zone);
   var partitioned = partitionCollectMessages(searched.messages, {
     month: plan.month,
     processedLabel: source.processed_label
   });
-  var selected = partitioned.kept;
+  var selected = mergeClientMessages(
+    partitioned.kept,
+    fetchMessagesById(staleMessageIds(existing, EXTRACT_VERSION), zone)
+  );
   var skipped = partitioned.skipped;
   var keptLine = 'gmail kept=' + selected.length + ' month=' + plan.month;
   searched.queryLogs.push(keptLine);
   if (typeof Logger !== 'undefined' && Logger.log) Logger.log(keptLine);
-  var plans = planClientSaves(selected);
+  var responses = {};
+  var s;
+  for (s = 0; s < selected.length; s++) responses[selected[s].id] = responsesForMessage_(selected[s]);
+  var plans = buildCollectWork(selected, responses, noticeWithoutInvoice).plans;
   var plannedIds = {};
   var p;
   for (p = 0; p < plans.length; p++) plannedIds[plans[p].messageId] = true;
@@ -138,7 +156,6 @@ function collectClientMonth(config, limit) {
   }
   var coverage = formatRunCoverage(searched.queryCounts, skipped, searched.messages.length);
   var capped = limitCollectPlans(plans, limit || {});
-  var existing = readInvoiceRows();
   var settings = clientExtractConfig_(source, plan.month);
   var startedAt = Date.now();
   var seen = {};
@@ -152,8 +169,28 @@ function collectClientMonth(config, limit) {
       if (runShouldStop(startedAt, Date.now(), RUN_TIME_BUDGET_MS, processed, 0) === 'time') break;
       seen[item.messageId] = true;
       processed++;
+      if (messageVersionStale(existing, item.messageId, EXTRACT_VERSION)) {
+        deleteInvoiceSources_(sourcesForMessage(existing, item.messageId));
+        var remain = [];
+        var r;
+        for (r = 0; r < existing.length; r++) {
+          if (messageIdFromSource(existing[r] && existing[r].source) !== item.messageId) remain.push(existing[r]);
+        }
+        existing = remain;
+      }
     }
     var key = clientSourceKey_(item);
+    if (item.rowOnly) {
+      if (!rowAlreadyStored_(existing, key)) {
+        var row = item.fields || {};
+        row.extract_version = EXTRACT_VERSION;
+        appendInvoiceRows([row]);
+        existing.push(row);
+        written++;
+      }
+      finished.push(item);
+      continue;
+    }
     if (!rowAlreadyStored_(existing, key)) {
       var stored = storeClientPlan_(item, plan.month, settings, existing, folder, source);
       folder = stored.folder;
