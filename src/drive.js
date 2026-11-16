@@ -38,6 +38,151 @@ function withPdfExtension_(fileName) {
   return name.replace(/\.[^.]+$/, '') + '.pdf';
 }
 
+function emailFromHeader(from) {
+  var text = String(from || '').trim();
+  var match = text.match(/<([^<>]+)>/);
+  return (match ? match[1] : text).trim();
+}
+
+function displayNameFromHeader(from) {
+  var text = String(from || '').trim();
+  var angle = text.lastIndexOf('<');
+  var name = angle > 0 ? text.slice(0, angle) : '';
+  name = name.replace(/^"+|"+$/g, '').trim();
+  if (name) return name;
+  var email = emailFromHeader(text);
+  var at = email.indexOf('@');
+  if (at > 0) return email.slice(0, at);
+  return 'sender';
+}
+
+function isCollectableAttachment_(name, mime) {
+  var type = String(mime || '')
+    .toLowerCase()
+    .split(';')[0]
+    .trim();
+  if (type === 'image/jpg') type = 'image/jpeg';
+  if (type === 'application/pdf' || type === 'image/jpeg' || type === 'image/png') return true;
+  var lower = String(name || '').toLowerCase();
+  return lower.endsWith('.pdf') || /\.(jpe?g|png)$/.test(lower);
+}
+
+/**
+ * One file per PDF or image on the message. Any subject is kept.
+ * A message with no such file and a body is saved as a PDF of that body.
+ * @param {Array<Object>} messages
+ * @return {Array<Object>}
+ */
+function planClientSaves(messages) {
+  var plans = [];
+  var seen = {};
+  var rows = messages || [];
+  for (var i = 0; i < rows.length; i++) {
+    var message = rows[i];
+    if (!message || !message.id || seen[message.id]) continue;
+    seen[message.id] = true;
+    var vendor = displayNameFromHeader(message.from);
+    var date = message.dateYmd || message.date || '';
+    var attachments = message.attachments || [];
+    var added = 0;
+    for (var a = 0; a < attachments.length; a++) {
+      var file = attachments[a] || {};
+      if (!isCollectableAttachment_(file.name, file.mime)) continue;
+      plans.push({
+        messageId: message.id,
+        threadId: message.threadId || '',
+        subject: message.subject || '',
+        from: message.from || '',
+        date: date,
+        vendor: vendor,
+        source: 'attachment',
+        originalName: file.name,
+        attachmentName: file.name,
+        attachmentIndex: file.index,
+        order: plans.length
+      });
+      added++;
+    }
+    if (added || !message.hasBody) continue;
+    plans.push({
+      messageId: message.id,
+      threadId: message.threadId || '',
+      subject: message.subject || '',
+      from: message.from || '',
+      date: date,
+      vendor: vendor,
+      source: 'body-pdf',
+      originalName: 'email.pdf',
+      attachmentName: '',
+      attachmentIndex: -1,
+      order: plans.length
+    });
+  }
+  return plans;
+}
+
+/**
+ * Caps a client run. messageLimit counts messages. documentLimit counts files.
+ * A message already started is kept until the document cap cuts it.
+ * @param {Array<Object>} plans
+ * @param {{messageLimit?: number, documentLimit?: number}} options
+ * @return {Array<Object>}
+ */
+function limitCollectPlans(plans, options) {
+  var source = options || {};
+  var messageCap = Number(source.messageLimit);
+  var docCap = Number(source.documentLimit);
+  var useMessages = messageCap > 0;
+  var useDocs = docCap > 0;
+  var rows = plans || [];
+  var kept = [];
+  var seen = {};
+  var messages = 0;
+  for (var i = 0; i < rows.length; i++) {
+    var id = String(rows[i].messageId || '');
+    if (!seen[id]) {
+      if (useMessages && messages >= messageCap) break;
+      seen[id] = true;
+      messages++;
+    }
+    if (useDocs && kept.length >= docCap) break;
+    kept.push(rows[i]);
+  }
+  return kept;
+}
+
+/** Threads whose every planned file was included in this run. */
+function clientThreadsToLabel(allPlans, finishedPlans) {
+  var wanted = {};
+  var done = {};
+  var threadOf = {};
+  var i;
+  var rows = allPlans || [];
+  for (i = 0; i < rows.length; i++) {
+    var id = String(rows[i].messageId || '');
+    if (!id) continue;
+    wanted[id] = (wanted[id] || 0) + 1;
+    threadOf[id] = rows[i].threadId || '';
+  }
+  var finished = finishedPlans || [];
+  for (i = 0; i < finished.length; i++) {
+    var fid = String(finished[i].messageId || '');
+    done[fid] = (done[fid] || 0) + 1;
+  }
+  var out = [];
+  var seen = {};
+  var ids = Object.keys(wanted);
+  for (i = 0; i < ids.length; i++) {
+    var messageId = ids[i];
+    if (done[messageId] !== wanted[messageId]) continue;
+    var threadId = String(threadOf[messageId] || '');
+    if (!threadId || seen[threadId]) continue;
+    seen[threadId] = true;
+    out.push(threadId);
+  }
+  return out;
+}
+
 /**
  * Plans a copy for each listed fixture message. Any other subject is ignored.
  * @param {Array<Object>} messages id, subject, date
@@ -328,6 +473,11 @@ if (typeof module !== 'undefined') {
     sanitizeFilePart: sanitizeFilePart,
     buildInvoiceFileName: buildInvoiceFileName,
     planFixtureSaves: planFixtureSaves,
+    planClientSaves: planClientSaves,
+    limitCollectPlans: limitCollectPlans,
+    clientThreadsToLabel: clientThreadsToLabel,
+    displayNameFromHeader: displayNameFromHeader,
+    emailFromHeader: emailFromHeader,
     bytesEqual: bytesEqual,
     isPdfBytes: isPdfBytes,
     mimeForFileName: mimeForFileName,

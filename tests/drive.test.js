@@ -33,6 +33,34 @@ test('file names follow YYYY-MM-DD_vendor_originalname', () => {
   assert.throws(() => drive.buildInvoiceFileName('02/11/2026', 'Cafe', 'a.pdf'), /YYYY-MM-DD/);
 });
 
+test('a client message with three pdfs is saved without a fixture subject list', () => {
+  const message = {
+    id: 'm-hi',
+    threadId: 't-hi',
+    subject: 'היי',
+    from: 'Accounts <accounts@vendor.example>',
+    dateYmd: '2026-11-16',
+    attachments: [
+      { index: 0, name: 'one.pdf', mime: 'application/pdf' },
+      { index: 1, name: 'two.pdf', mime: 'application/pdf' },
+      { index: 2, name: 'three.pdf', mime: 'application/pdf' }
+    ]
+  };
+  const plans = drive.planClientSaves([message]);
+  assert.equal(plans.length, 3);
+  assert.deepEqual(
+    plans.map((plan) => plan.attachmentName),
+    ['one.pdf', 'two.pdf', 'three.pdf']
+  );
+  assert.equal(plans[0].vendor, 'Accounts');
+  assert.equal(plans[0].date, '2026-11-16');
+  assert.equal(plans[0].subject, 'היי');
+  const capped = drive.limitCollectPlans(plans, { documentLimit: 3 });
+  assert.equal(capped.length, 3);
+  assert.deepEqual(drive.clientThreadsToLabel(plans, capped), ['t-hi']);
+  assert.deepEqual(drive.clientThreadsToLabel(plans, plans.slice(0, 2)), []);
+});
+
 test('plans copy the eight fixtures and render only the email body as PDF', () => {
   const plans = drive.planFixtureSaves(
     listed([7, 0, 5], { id: 'other', subject: 'Your bank statement', date: '2026-11-02' }),

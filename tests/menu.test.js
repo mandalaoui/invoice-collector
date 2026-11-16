@@ -27,3 +27,20 @@ test('the menu file does not send mail', () => {
   assert.equal(source.includes('sendEmail'), false);
   assert.equal(source.includes('MailApp'), false);
 });
+
+test('client runs search Settings queries and do not use fixture filters', () => {
+  const root = path.join(__dirname, '..', 'src');
+  const menuSource = fs.readFileSync(path.join(root, 'menu.js'), 'utf8');
+  const mainSource = fs.readFileSync(path.join(root, 'main.js'), 'utf8');
+  assert.match(menuSource, /collectClientMonth\(config, \{ documentLimit: testRunBatchSize\(\) \}\)/);
+  assert.match(mainSource, /buildCollectQueries\(/);
+  assert.match(mainSource, /readClientMessages\(/);
+  assert.equal(mainSource.includes('allowedSubjects'), false);
+  for (const source of [menuSource, mainSource]) {
+    assert.equal(source.includes('buildFixtureSearchQueries'), false);
+    assert.equal(source.includes('readFixtureMessages'), false);
+    assert.equal(source.includes('assertFixtureQueries_'), false);
+    assert.equal(source.includes('fixtureSubjects_'), false);
+    assert.equal(source.includes('applyProcessedLabel'), false);
+  }
+});

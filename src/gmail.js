@@ -1,8 +1,8 @@
 /**
  * Gmail search for one month.
  * Query text is built here and tested without Gmail.
- * The only GmailApp call refuses to run unless every query is limited
- * to the eight fixture subjects sent from this account.
+ * Client runs search Settings lines plus the month window and processed label.
+ * Fixture subjects are a dev-only search and are not applied to client runs.
  */
 
 var FIXTURE_SEARCH_PAGE = 20;
@@ -133,6 +133,137 @@ function buildCollectQueries(config) {
     queries.push('from:(' + fromTerms.join(' OR ') + ') ' + windowTerm + ' ' + skip);
   }
   return { month: month, queries: queries };
+}
+
+/** One log line: the exact string passed to Gmail, then the thread count. */
+function formatGmailQueryLog(query, count) {
+  var hits = Number(count);
+  if (!isFinite(hits) || hits < 0) hits = 0;
+  return 'gmail query=' + String(query == null ? '' : query) + ' count=' + String(hits);
+}
+
+var CLIENT_SEARCH_PAGE = 50;
+var CLIENT_SEARCH_MAX_THREADS = 500;
+
+function searchClientThreads_(query) {
+  var threads = [];
+  var seen = {};
+  var start = 0;
+  while (start < CLIENT_SEARCH_MAX_THREADS) {
+    var batch = GmailApp.search(query, start, CLIENT_SEARCH_PAGE);
+    for (var i = 0; i < batch.length; i++) {
+      var id = batch[i].getId();
+      if (seen[id]) continue;
+      seen[id] = true;
+      threads.push(batch[i]);
+    }
+    if (batch.length < CLIENT_SEARCH_PAGE) break;
+    start += CLIENT_SEARCH_PAGE;
+  }
+  return threads;
+}
+
+function clientAttachmentList_(message) {
+  var files;
+  try {
+    files = message.getAttachments({ includeInlineImages: false, includeAttachments: true });
+  } catch (ignore) {
+    files = message.getAttachments();
+  }
+  var rows = [];
+  var list = files || [];
+  for (var i = 0; i < list.length; i++) {
+    rows.push({
+      index: i,
+      name: list[i].getName(),
+      mime: list[i].getContentType()
+    });
+  }
+  return rows;
+}
+
+function clientMessagesFromThread_(thread, timeZone) {
+  var labels = [];
+  var labelObjects = thread.getLabels();
+  for (var i = 0; i < labelObjects.length; i++) labels.push(labelObjects[i].getName());
+  var messages = thread.getMessages();
+  var rows = [];
+  for (var m = 0; m < messages.length; m++) {
+    var message = messages[m];
+    var body = String(message.getPlainBody ? message.getPlainBody() : message.getBody() || '');
+    rows.push({
+      id: message.getId(),
+      threadId: thread.getId(),
+      subject: message.getSubject(),
+      from: message.getFrom(),
+      dateYmd: Utilities.formatDate(message.getDate(), timeZone, 'yyyy-MM-dd'),
+      labelNames: labels,
+      attachments: clientAttachmentList_(message),
+      hasBody: body.trim().length > 0
+    });
+  }
+  return rows;
+}
+
+/**
+ * Settings queries only. No fixture subject list and no from:me requirement.
+ * Logs each final query and the number of threads it returned.
+ * @param {string[]} queries
+ * @param {string} timeZone
+ * @return {{messages: Array<Object>, queryLogs: string[]}}
+ */
+function readClientMessages(queries, timeZone) {
+  var list = queries || [];
+  var zone = timeZone || 'Asia/Jerusalem';
+  var queryLogs = [];
+  var found = [];
+  var seenThreads = {};
+  if (!list.length) {
+    var emptyLine = 'gmail queries=0 count=0';
+    queryLogs.push(emptyLine);
+    if (typeof Logger !== 'undefined' && Logger.log) Logger.log(emptyLine);
+    return { messages: found, queryLogs: queryLogs };
+  }
+  for (var q = 0; q < list.length; q++) {
+    var threads = searchClientThreads_(list[q]);
+    var line = formatGmailQueryLog(list[q], threads.length);
+    queryLogs.push(line);
+    if (typeof Logger !== 'undefined' && Logger.log) Logger.log(line);
+    for (var t = 0; t < threads.length; t++) {
+      var thread = threads[t];
+      if (seenThreads[thread.getId()]) continue;
+      seenThreads[thread.getId()] = true;
+      found = found.concat(clientMessagesFromThread_(thread, zone));
+    }
+  }
+  return { messages: found, queryLogs: queryLogs };
+}
+
+/**
+ * Adds processed_label to the given threads. Subjects are not checked.
+ * @return {number} threads labeled
+ */
+function labelClientThreads(threadIds, labelName) {
+  var name = String(labelName || '').trim();
+  if (!name) throw new Error('processed_label is empty');
+  var ids = [];
+  var seen = {};
+  var list = threadIds || [];
+  var i;
+  for (i = 0; i < list.length; i++) {
+    var id = String(list[i] || '');
+    if (!id || seen[id]) continue;
+    seen[id] = true;
+    ids.push(id);
+  }
+  if (!ids.length) return 0;
+  var label = gmailLabel_(name);
+  for (i = 0; i < ids.length; i++) {
+    var thread = GmailApp.getThreadById(ids[i]);
+    if (!thread) throw new Error('Gmail thread was not found');
+    thread.addLabel(label);
+  }
+  return ids.length;
 }
 
 /**
@@ -428,6 +559,9 @@ if (typeof module !== 'undefined') {
     labelSearchName: labelSearchName,
     excludeProcessedTerm: excludeProcessedTerm,
     buildCollectQueries: buildCollectQueries,
+    formatGmailQueryLog: formatGmailQueryLog,
+    readClientMessages: readClientMessages,
+    labelClientThreads: labelClientThreads,
     buildFixtureSearchQueries: buildFixtureSearchQueries,
     assertFixtureQueries_: assertFixtureQueries_,
     selectCollectMessages: selectCollectMessages,

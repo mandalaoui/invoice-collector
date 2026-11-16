@@ -57,6 +57,52 @@ test('collect queries use each Settings search, the vendor list, and skip proces
   });
 });
 
+test('client query builder keeps Settings text and does not add fixture filters', () => {
+  const settings = require('../src/config.js');
+  const searchField = settings.SETTINGS_FIELDS.find((field) => field.key === 'search_queries');
+  const plan = gmail.buildCollectQueries({
+    month: '2026-11',
+    today: '2026-11-16',
+    processed_label: 'invoices/processed',
+    search_queries: [searchField.value],
+    vendor_whitelist: []
+  });
+  const query =
+    '(has:attachment (חשבונית OR קבלה OR invoice OR receipt)) after:2026/10/31 before:2026/12/01 -label:invoices-processed';
+  assert.deepEqual(plan.queries, [query]);
+  assert.equal(gmail.formatGmailQueryLog(query, 1), 'gmail query=' + query + ' count=1');
+  assert.equal(plan.queries[0].includes('from:me'), false);
+  assert.equal(plan.queries[0].includes('in:anywhere'), false);
+  subjects.forEach((subject) => {
+    assert.equal(plan.queries[0].includes(subject), false);
+  });
+  const casual = gmail.buildCollectQueries({
+    month: '2026-11',
+    today: '2026-11-16',
+    processed_label: 'invoices/processed',
+    search_queries: ['subject:היי'],
+    vendor_whitelist: []
+  });
+  assert.deepEqual(casual.queries, [
+    '(subject:היי) after:2026/10/31 before:2026/12/01 -label:invoices-processed'
+  ]);
+  const kept = gmail.selectCollectMessages(
+    [{ id: 'm1', subject: 'היי', dateYmd: '2026-11-16', labelNames: [], from: 'Accounts <accounts@vendor.example>' }],
+    { month: '2026-11', processedLabel: 'invoices/processed' }
+  );
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0].subject, 'היי');
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'gmail.js'), 'utf8');
+  const clientSearch = source.slice(
+    source.indexOf('function readClientMessages'),
+    source.indexOf('function labelClientThreads')
+  );
+  assert.equal(clientSearch.includes('assertFixtureQueries_'), false);
+  assert.equal(clientSearch.includes('fixtureSubjects_'), false);
+  assert.equal(clientSearch.includes('allowedSubjects'), false);
+  assert.equal(clientSearch.includes('from:me'), false);
+});
+
 test('empty Settings searches do not search the mailbox', () => {
   const plan = gmail.buildCollectQueries({
     month: '2026-11',

@@ -89,8 +89,10 @@ function testRun() {
     var config = getConfig();
     var month = resolveCollectMonth(config.month, todayYmd_());
     logRow = beginRunLog_(entry);
-    var limited = limitRows_(rowsForMonth(readInvoiceRows(), month), testRunBatchSize());
-    if (!limited.length) throw new Error('no invoices for ' + month);
+    var collected = collectClientMonth(config, { documentLimit: testRunBatchSize() });
+    entry.messages = collected.messages || 0;
+    var limited = limitRows_(rowsForMonth(readInvoiceRows(), collected.month || month), testRunBatchSize());
+    if (!limited.length) throw noInvoicesError_(collected.month || month, collected);
     var summary = summarizeMonth(limited);
     var pdf = createMergedInvoicePdf(limited, month, { name: testRunPdfName(month) });
     var folder = DriveApp.getFolderById(config.invoices_folder_id);
