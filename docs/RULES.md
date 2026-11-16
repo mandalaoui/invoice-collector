@@ -10,7 +10,7 @@
 | Type | Keywords |
 |---|---|
 | tax_invoice_receipt | חשבונית מס קבלה, חשבונית מס/קבלה, tax invoice receipt |
-| tax_invoice | חשבונית מס, tax invoice |
+| tax_invoice | חשבונית מס, tax invoice, חשבונית |
 | receipt | קבלה, receipt |
 | credit_note | חשבונית זיכוי, זיכוי, credit note |
 | not_invoice | הצעת מחיר, quote, newsletter, promotion, "הזמנה התקבלה" without amounts |

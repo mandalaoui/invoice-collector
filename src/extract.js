@@ -1,5 +1,5 @@
 /** Bump when extraction or coverage rules change so stored rows are rewritten. */
-var EXTRACT_VERSION = '2';
+var EXTRACT_VERSION = '3';
 
 /**
  * Pure extraction. Text in, fields and confidence out.
@@ -81,10 +81,45 @@ function typedPhrases_(lines) {
     });
 }
 
+function docTypePhrases_(config) {
+  var phrases = typedPhrases_((config || {}).keywords_doc_type);
+  var hasPlain = false;
+  var i;
+  for (i = 0; i < phrases.length; i++) {
+    if (phrases[i].type === 'tax_invoice' && squashExtract_(phrases[i].phrase) === squashExtract_('חשבונית')) {
+      hasPlain = true;
+    }
+  }
+  if (!hasPlain) phrases.push({ type: 'tax_invoice', phrase: 'חשבונית' });
+  phrases.sort(function (a, b) {
+    return squashExtract_(b.phrase).length - squashExtract_(a.phrase).length;
+  });
+  return phrases;
+}
+
+/** A title line starts with the type phrase. "סיכום חשבונית" counts. "עבור חשבונית" does not. */
+function titleTypeOnLine_(line, phrases) {
+  var folded = squashExtract_(line);
+  var stripped = folded.replace(/^סיכום/, '');
+  var i;
+  for (i = 0; i < phrases.length; i++) {
+    var phrase = squashExtract_(phrases[i].phrase);
+    if (!phrase) continue;
+    if (stripped.indexOf(phrase) === 0 || folded.indexOf(phrase) === 0) {
+      return { value: phrases[i].type, keyword: phrases[i].phrase, line: line };
+    }
+  }
+  return null;
+}
+
 function findDocTypeHit_(text, config) {
-  var phrases = typedPhrases_(config.keywords_doc_type);
+  var phrases = docTypePhrases_(config);
   var lines = extractLines_(text);
   var i;
+  for (i = 0; i < lines.length; i++) {
+    var title = titleTypeOnLine_(lines[i], phrases);
+    if (title) return title;
+  }
   var n;
   for (i = 0; i < phrases.length; i++) {
     if (!phraseHits_(text, phrases[i].phrase)) continue;
@@ -139,6 +174,14 @@ function parseAmounts_(line) {
     if (Math.abs(found[i]) > Math.abs(best)) best = found[i];
   }
   return best;
+}
+
+function listAmounts_(slice) {
+  var cleaned = stripDates_(slice).replace(/\d+(?:\.\d+)?\s*%/g, ' ');
+  var detailed = /-?\d{1,3}(?:,\d{3})+(?:\.\d+)?-?|-?\d+\.\d+-?/g;
+  var found = collectAmounts_(cleaned, detailed);
+  if (!found.length) found = collectAmounts_(cleaned, /-?\d{1,6}-?/g);
+  return found;
 }
 
 function collectAmounts_(line, pattern) {
@@ -241,6 +284,44 @@ function amountForKeywords_(lines, keywords, skipKeywords) {
   return amountHit_(lines, keywords, skipKeywords).value;
 }
 
+/**
+ * "<amount> מע\"מ ... <amount> סה\"כ לתשלום <amount>" on one line or across
+ * adjacent lines. Used only when before + vat is about the total.
+ */
+function sameLineMoney_(text, tolerance) {
+  var flat = normalizeExtractText(text).replace(/\n+/g, ' ');
+  var vatWord = 'מע"מ';
+  var totalWord = 'סה"כ לתשלום';
+  var from = 0;
+  while (from < flat.length) {
+    var vatAt = flat.indexOf(vatWord, from);
+    if (vatAt < 0) return null;
+    var beforeWord = flat.slice(Math.max(0, vatAt - 8), vatAt);
+    if (/לפני\s*$/.test(beforeWord) || /כולל\s*$/.test(beforeWord)) {
+      from = vatAt + vatWord.length;
+      continue;
+    }
+    var totalAt = flat.indexOf(totalWord, vatAt + vatWord.length);
+    if (totalAt < 0) return null;
+    var beforeAmounts = listAmounts_(flat.slice(0, vatAt));
+    var vatAmounts = listAmounts_(flat.slice(vatAt + vatWord.length, totalAt));
+    var totalAmounts = listAmounts_(flat.slice(totalAt + totalWord.length));
+    var before = beforeAmounts.length ? beforeAmounts[beforeAmounts.length - 1] : null;
+    var vat = vatAmounts.length ? vatAmounts[0] : null;
+    var total = totalAmounts.length ? totalAmounts[0] : null;
+    if (before != null && vat != null && total != null && moneyClose_(before + vat, total, tolerance)) {
+      var line = flat.slice(Math.max(0, vatAt - 40), Math.min(flat.length, totalAt + totalWord.length + 24)).trim();
+      return {
+        before: { value: before, keyword: 'same line', line: line },
+        vat: { value: vat, keyword: 'same line', line: line },
+        total: { value: total, keyword: 'same line', line: line }
+      };
+    }
+    from = vatAt + vatWord.length;
+  }
+  return null;
+}
+
 function collectIdNumbers_(lines, config) {
   var ids = [];
   function add(value) {
@@ -302,6 +383,8 @@ function emptyHit_() {
 }
 
 function findDocNumberHit_(lines, config) {
+  var near = docNumberNearTitle_(lines, config);
+  if (near) return near;
   var keywords = (config.keywords_doc_number || []).slice();
   keywords.push('קבלה מספר');
   keywords.push("מס' מסמך");
@@ -350,6 +433,24 @@ function findDocNumberHit_(lines, config) {
 
 function findDocNumber_(lines, config) {
   return findDocNumberHit_(lines, config).value;
+}
+
+/** INV-1001 / REC-2001, including RTL-reversed -2001REC and -1001INV, next to the title. */
+function docNumberNearTitle_(lines, config) {
+  var phrases = docTypePhrases_(config);
+  var list = lines || [];
+  var i;
+  var j;
+  for (i = 0; i < list.length; i++) {
+    if (!titleTypeOnLine_(list[i], phrases)) continue;
+    var end = Math.min(list.length, i + 3);
+    for (j = i; j < end; j++) {
+      var token = letterDocToken_(list[j]);
+      if (!token) continue;
+      return { value: token, keyword: 'near title', line: list[j] };
+    }
+  }
+  return null;
 }
 
 function findDateHit_(lines, config) {
@@ -478,6 +579,32 @@ function noiseNameLine_(line) {
   return false;
 }
 
+function headerNoiseLine_(line) {
+  if (noiseNameLine_(line)) return true;
+  var flat = squashExtract_(line);
+  var bits = ['מסמךדוגמה', 'נתוניםפיקטיביים', 'מסמךבדיקה', 'מסמךפיקטיבי', 'ללאתוקף'];
+  var i;
+  for (i = 0; i < bits.length; i++) {
+    if (flat.indexOf(bits[i]) >= 0) return true;
+  }
+  if (/^עמוד\d+מתוך\d+$/.test(flat)) return true;
+  if (/^page\d+of\d+$/.test(flat)) return true;
+  return false;
+}
+
+function labeledAsideLine_(line) {
+  return /^(שירות|לקוח|תיאור|תאריך|סכום|עמוד|שער|פרטי|אמצעי|יתרה|סטטוס|פירוט|התקבל|עבור|סיכום)(?:\s|:|$)/.test(
+    normalizeExtractText(line)
+  );
+}
+
+function vendorFromLine_(line) {
+  return normalizeExtractText(line)
+    .replace(/^(ספק|supplier)\s*:\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function nameLikeLine_(line, phrases, idKeywords) {
   if (line.indexOf('@') >= 0) return false;
   if (dateToken_(line)) return false;
@@ -488,27 +615,44 @@ function nameLikeLine_(line, phrases, idKeywords) {
   return true;
 }
 
+function vendorCandidateLine_(line, phrases, idKeywords, settings) {
+  if (headerNoiseLine_(line) || labeledAsideLine_(line)) return false;
+  if (titleTypeOnLine_(line, phrases) || letterDocToken_(line)) return false;
+  if (!nameLikeLine_(line, phrases, idKeywords) || ownCompanyLine_(line, settings)) return false;
+  if (!businessNameLine_(line) && listAmounts_(line).length) return false;
+  return true;
+}
+
 function findVendorNameHit_(lines, config, senderName) {
   var settings = config || {};
-  var phrases = typedPhrases_(settings.keywords_doc_type);
+  var phrases = docTypePhrases_(settings);
   var idKeywords = settings.keywords_vendor_id || [];
+  var titleAt = -1;
   var buyerAt = lines.length;
   var i;
   for (i = 0; i < lines.length; i++) {
+    if (titleAt < 0 && titleTypeOnLine_(lines[i], phrases)) titleAt = i;
     if (buyerMarkerLine_(lines[i])) {
       buyerAt = i;
       break;
     }
   }
-  for (i = 0; i < buyerAt; i++) {
-    if (!nameLikeLine_(lines[i], phrases, idKeywords) || ownCompanyLine_(lines[i], settings)) continue;
-    if (businessNameLine_(lines[i])) {
-      return { value: lines[i].replace(/\s+/g, ' ').trim(), keyword: 'business name', line: lines[i] };
+  if (titleAt >= 0) {
+    for (i = titleAt - 1; i >= 0; i--) {
+      if (!vendorCandidateLine_(lines[i], phrases, idKeywords, settings)) continue;
+      return { value: vendorFromLine_(lines[i]), keyword: 'line before title', line: lines[i] };
     }
   }
-  for (i = 0; i < buyerAt; i++) {
-    if (!nameLikeLine_(lines[i], phrases, idKeywords) || ownCompanyLine_(lines[i], settings)) continue;
-    return { value: lines[i].replace(/\s+/g, ' ').trim(), keyword: 'first name line', line: lines[i] };
+  var after = titleAt >= 0 ? titleAt + 1 : 0;
+  for (i = after; i < buyerAt; i++) {
+    if (!vendorCandidateLine_(lines[i], phrases, idKeywords, settings)) continue;
+    if (businessNameLine_(lines[i])) {
+      return { value: vendorFromLine_(lines[i]), keyword: 'business name', line: lines[i] };
+    }
+  }
+  for (i = after; i < buyerAt; i++) {
+    if (!vendorCandidateLine_(lines[i], phrases, idKeywords, settings)) continue;
+    return { value: vendorFromLine_(lines[i]), keyword: 'first name line', line: lines[i] };
   }
   var fallback = String(senderName || '').trim();
   if (!fallback) return emptyHit_();
@@ -752,15 +896,18 @@ function explainInvoice(text, config, context) {
   var settings = config || {};
   var meta = context || {};
   var lines = extractLines_(text);
-  var before = amountHit_(lines, settings.keywords_before_vat, []);
-  var total = amountHit_(lines, settings.keywords_total, settings.keywords_before_vat);
+  var sameLine = sameLineMoney_(text, settings.amount_tolerance);
+  var before = sameLine ? sameLine.before : amountHit_(lines, settings.keywords_before_vat, []);
+  var total = sameLine ? sameLine.total : amountHit_(lines, settings.keywords_total, settings.keywords_before_vat);
   var vatSkip = [].concat(settings.keywords_before_vat || [], settings.keywords_total || []);
-  var vat = chooseVatHit_(
-    collectKeywordAmountHits_(lines, settings.keywords_vat, vatSkip),
-    total.value,
-    settings.vat_rate,
-    settings.amount_tolerance
-  );
+  var vat = sameLine
+    ? sameLine.vat
+    : chooseVatHit_(
+        collectKeywordAmountHits_(lines, settings.keywords_vat, vatSkip),
+        total.value,
+        settings.vat_rate,
+        settings.amount_tolerance
+      );
   var docType = findDocTypeHit_(text, settings);
   var docNumber = findDocNumberHit_(lines, settings);
   var docDate = findDateHit_(lines, settings);
@@ -811,6 +958,110 @@ function explainInvoice(text, config, context) {
 
 function extractInvoice(text, config, context) {
   return explainInvoice(text, config, context).fields;
+}
+
+function pageMarkerLine_(line) {
+  var flat = squashExtract_(line);
+  return /^עמוד\d+מתוך\d+$/.test(flat) || /^page\d+of\d+$/.test(flat);
+}
+
+function pagesFromText_(text) {
+  var raw = String(text || '');
+  var chunks = raw.split('\f');
+  if (chunks.length > 1) {
+    return chunks
+      .map(function (part) {
+        return part.trim();
+      })
+      .filter(function (part) {
+        return part.length > 0;
+      });
+  }
+  var lines = raw.split('\n');
+  var pages = [];
+  var buf = [];
+  var i;
+  for (i = 0; i < lines.length; i++) {
+    buf.push(lines[i]);
+    if (pageMarkerLine_(lines[i])) {
+      var page = buf.join('\n').trim();
+      if (page) pages.push(page);
+      buf = [];
+    }
+  }
+  var tail = buf.join('\n').trim();
+  if (tail) pages.push(tail);
+  if (pages.length > 1) return pages;
+  return [raw];
+}
+
+function rangeLabel_(start, end) {
+  return start === end ? String(start) : start + '-' + end;
+}
+
+/**
+ * One entry per document title. Pages before the first title stay with the
+ * first document. pages are 1-based indexes; range is "1-3" or "4".
+ * @param {string|string[]} input
+ * @param {Object} config
+ * @return {Array<{text: string, pages: number[], range: string}>}
+ */
+function splitDocuments(input, config) {
+  var pages = Array.isArray(input) ? input.slice() : pagesFromText_(input);
+  if (!pages.length) pages = [''];
+  var phrases = docTypePhrases_(config);
+  var titleAt = [];
+  var i;
+  var n;
+  for (i = 0; i < pages.length; i++) {
+    var lines = extractLines_(pages[i]);
+    for (n = 0; n < lines.length; n++) {
+      if (titleTypeOnLine_(lines[n], phrases)) {
+        titleAt.push(i);
+        break;
+      }
+    }
+  }
+  if (titleAt.length < 2) {
+    var only = [];
+    for (i = 0; i < pages.length; i++) only.push(i + 1);
+    return [{ text: pages.join('\n'), pages: only, range: rangeLabel_(1, pages.length) }];
+  }
+  var docs = [];
+  for (n = 0; n < titleAt.length; n++) {
+    var start = n === 0 ? 0 : titleAt[n];
+    var end = n + 1 < titleAt.length ? titleAt[n + 1] - 1 : pages.length - 1;
+    if (end < start) end = start;
+    var indexes = [];
+    for (i = start; i <= end; i++) indexes.push(i + 1);
+    docs.push({
+      text: pages.slice(start, end + 1).join('\n'),
+      pages: indexes,
+      range: rangeLabel_(start + 1, end + 1)
+    });
+  }
+  return docs;
+}
+
+/**
+ * One extracted row per document in the file. Multiple documents get
+ * source suffix #p1-3 and notes "pages 1-3".
+ */
+function invoiceRowsFromText(text, config, context, sourceKey) {
+  var docs = splitDocuments(text, config);
+  var many = docs.length > 1;
+  var rows = [];
+  var i;
+  for (i = 0; i < docs.length; i++) {
+    var fields = extractInvoice(docs[i].text, config, context);
+    if (many) {
+      var note = 'pages ' + docs[i].range;
+      fields.notes = fields.notes ? String(fields.notes) + '\n' + note : note;
+      if (sourceKey) fields.source = sourceKey + '#p' + docs[i].range;
+    }
+    rows.push(fields);
+  }
+  return rows;
 }
 
 function moneyClose_(left, right, tolerance) {
@@ -912,6 +1163,8 @@ if (typeof module !== 'undefined') {
     normalizeExtractText: normalizeExtractText,
     extractInvoice: extractInvoice,
     explainInvoice: explainInvoice,
+    splitDocuments: splitDocuments,
+    invoiceRowsFromText: invoiceRowsFromText,
     keywordPages: keywordPages,
     noticeWithoutInvoice: noticeWithoutInvoice,
     classifyInvoice: classifyInvoice

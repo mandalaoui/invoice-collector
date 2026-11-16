@@ -43,8 +43,10 @@ function clientSourceKey_(plan) {
 
 function rowAlreadyStored_(rows, sourceKey) {
   var list = rows || [];
+  var key = String(sourceKey || '');
   for (var i = 0; i < list.length; i++) {
-    if (invoiceSourceId(list[i] && list[i].source) === sourceKey) return true;
+    var id = invoiceSourceId(list[i] && list[i].source);
+    if (id === key || (key && id.indexOf(key + '#p') === 0)) return true;
   }
   return false;
 }
@@ -94,21 +96,27 @@ function storeClientPlan_(plan, month, settings, existing, folder, config) {
   if (!saved.length) throw new Error('file was not saved');
   var file = DriveApp.getFileById(saved[0].id);
   var read = readDriveFileText(file);
-  var fields = extractInvoice(read.text, settings, {
+  var sourceKey = clientSourceKey_(plan);
+  var context = {
     senderEmail: emailFromHeader(plan.from),
     senderName: plan.vendor
-  });
-  fields.status = classifyInvoice(fields, settings, existing).status;
-  var notice = noticeWithoutInvoice(read.text);
-  if (notice) {
-    fields.status = notice.status;
-    fields.notes = notice.notes;
+  };
+  var rows = invoiceRowsFromText(read.text, settings, context, sourceKey);
+  var i;
+  for (i = 0; i < rows.length; i++) {
+    var fields = rows[i];
+    fields.status = classifyInvoice(fields, settings, existing).status;
+    var notice = rows.length === 1 ? noticeWithoutInvoice(read.text) : null;
+    if (notice) {
+      fields.status = notice.status;
+      fields.notes = fields.notes ? fields.notes + '\n' + notice.notes : notice.notes;
+    }
+    fields.extract_version = EXTRACT_VERSION;
+    if (!fields.source) fields.source = sourceKey;
+    fields.file_link = file.getUrl();
   }
-  fields.extract_version = EXTRACT_VERSION;
-  fields.source = clientSourceKey_(plan);
-  fields.file_link = file.getUrl();
-  appendInvoiceRows([fields]);
-  return { folder: target, row: fields };
+  appendInvoiceRows(rows);
+  return { folder: target, rows: rows, row: rows[0] };
 }
 
 /**
@@ -194,8 +202,10 @@ function collectClientMonth(config, limit) {
     if (!rowAlreadyStored_(existing, key)) {
       var stored = storeClientPlan_(item, plan.month, settings, existing, folder, source);
       folder = stored.folder;
-      existing.push(stored.row);
-      written++;
+      var storedRows = stored.rows || [stored.row];
+      var s;
+      for (s = 0; s < storedRows.length; s++) existing.push(storedRows[s]);
+      written += storedRows.length;
     }
     finished.push(item);
   }

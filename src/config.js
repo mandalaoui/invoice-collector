@@ -160,6 +160,7 @@ var SETTINGS_FIELDS = [
       'tax_invoice_receipt | tax invoice receipt',
       'tax_invoice | חשבונית מס',
       'tax_invoice | tax invoice',
+      'tax_invoice | חשבונית',
       'receipt | קבלה',
       'receipt | receipt',
       'credit_note | חשבונית זיכוי',
