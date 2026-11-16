@@ -23,7 +23,8 @@ var INVOICE_HEADERS = [
   'source',
   'file_link',
   'confidence',
-  'status'
+  'status',
+  'notes'
 ];
 
 var RUN_LOG_HEADERS = [

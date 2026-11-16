@@ -33,6 +33,12 @@ test('text-layer PDFs and the html fixture return their own text', () => {
   }
 });
 
+test('page texts follow the page tree', () => {
+  const texts = ocr.extractPdfPageTexts(readFixture('01-tax-invoice-receipt-he.pdf'));
+  assert.equal(texts.length, 1);
+  assert.match(texts[0], /10482/);
+});
+
 test('a scanned PDF and a photo have no text layer and use OCR', () => {
   const scan = ocr.readDocumentText({
     name: '04-scanned-receipt-he.pdf',

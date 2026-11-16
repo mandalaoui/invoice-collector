@@ -107,8 +107,9 @@ function testRun() {
         scanned: collected.scanned || 0,
         documents: summary.documents
       },
-      notices: pdf.notices || []
+      notices: noticeLines_(pdf.notices)
     });
+    writeInvoiceNotes(pdf.notices);
     if (String(savedDraft.to || '').toLowerCase().indexOf(me.toLowerCase()) < 0) {
       throw new Error('draft went to ' + savedDraft.to);
     }

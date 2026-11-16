@@ -370,15 +370,21 @@ function extractPdfTextLayer(bytes) {
       if (uni && fonts[uni[1]]) fontNames[found[1]] = fonts[uni[1]];
     }
   }
-  var fontIds = Object.keys(fontNames);
-  if (!fontIds.length) return '';
-  var font = fontNames[fontIds[0]];
+  return renderPdfContent_(content, fontNames);
+}
+
+function renderPdfContent_(content, fontNames) {
+  var names = fontNames || {};
+  var fontIds = Object.keys(names);
+  if (!content || !fontIds.length) return '';
+  var font = names[fontIds[0]];
   var glyphs = [];
   var stack = [];
   var array = null;
   var x = 0;
   var y = 0;
   var tokens = pdfTokens_(content);
+  var i;
   for (i = 0; i < tokens.length; i++) {
     var kind = tokens[i][0];
     var value = tokens[i][1];
@@ -397,7 +403,7 @@ function extractPdfTextLayer(bytes) {
       continue;
     }
     if (value === 'Tf' && stack.length) {
-      if (fontNames[stack[0][1]]) font = fontNames[stack[0][1]];
+      if (names[stack[0][1]]) font = names[stack[0][1]];
       stack = [];
       continue;
     }
@@ -457,6 +463,88 @@ function extractPdfTextLayer(bytes) {
     rendered.push(logicalPdfLine_(line.join('')));
   }
   return rendered.join('\n').trim();
+}
+
+function pdfContentIds_(dictionary) {
+  var dict = dictionary || '';
+  var array = /\/Contents\s*\[([^\]]*)\]/.exec(dict);
+  var refs = array ? array[1].match(/(\d+)\s+\d+\s+R/g) || [] : [];
+  if (!refs.length) {
+    var one = /\/Contents\s+(\d+)\s+\d+\s+R/.exec(dict);
+    return one ? [one[1]] : [];
+  }
+  var ids = [];
+  for (var i = 0; i < refs.length; i++) ids.push(/^(\d+)/.exec(refs[i])[1]);
+  return ids;
+}
+
+function walkPdfPages_(objects, id, out, seen) {
+  if (!id || seen[id] || !objects[id]) return;
+  seen[id] = true;
+  var dict = objects[id].dictionary || '';
+  if (/\/Type\s*\/Pages\b/.test(dict)) {
+    var kids = /\/Kids\s*\[([^\]]*)\]/.exec(dict);
+    var refs = kids ? kids[1].match(/(\d+)\s+\d+\s+R/g) || [] : [];
+    for (var i = 0; i < refs.length; i++) walkPdfPages_(objects, /^(\d+)/.exec(refs[i])[1], out, seen);
+    return;
+  }
+  if (/\/Type\s*\/Page\b/.test(dict)) out.push(id);
+}
+
+/**
+ * One string per page, in page-tree order. Empty when the text layer cannot be read.
+ * @return {string[]}
+ */
+function extractPdfPageTexts(bytes) {
+  var raw = toByteArray_(bytes);
+  if (raw.length < 5 || raw[0] !== 0x25 || raw[1] !== 0x50 || raw[2] !== 0x44 || raw[3] !== 0x46) return [];
+  if (!loadZlib_()) return [];
+  var binary = binaryString_(raw);
+  var entries = parseXref_(binary);
+  if (!entries) return [];
+  var objects = {};
+  var ids = Object.keys(entries);
+  var i;
+  for (i = 0; i < ids.length; i++) objects[ids[i]] = pdfObjectAt_(raw, binary, entries[ids[i]]);
+  var fonts = {};
+  for (i = 0; i < ids.length; i++) {
+    var obj = objects[ids[i]];
+    if (!obj || !obj.stream) continue;
+    var streamText = binaryString_(obj.stream);
+    if (streamText.indexOf('beginbfchar') >= 0 || streamText.indexOf('beginbfrange') >= 0) fonts[ids[i]] = cmapOf_(obj.stream);
+  }
+  var fontNames = {};
+  for (i = 0; i < ids.length; i++) {
+    var dictionary = objects[ids[i]] && objects[ids[i]].dictionary;
+    if (!dictionary || dictionary.indexOf('/Font') < 0) continue;
+    var links = dictionary.match(/\/(F\d+)\s+(\d+)\s+0\s+R/g) || [];
+    for (var link = 0; link < links.length; link++) {
+      var found = /\/(F\d+)\s+(\d+)\s+0\s+R/.exec(links[link]);
+      var fontObj = objects[found[2]];
+      if (!fontObj) continue;
+      var uni = /\/ToUnicode\s+(\d+)\s+0\s+R/.exec(fontObj.dictionary || '');
+      if (uni && fonts[uni[1]]) fontNames[found[1]] = fonts[uni[1]];
+    }
+  }
+  var trailerAt = binary.lastIndexOf('trailer');
+  var root = trailerAt >= 0 ? /\/Root\s+(\d+)\s+\d+\s+R/.exec(binary.slice(trailerAt, trailerAt + 400)) : null;
+  if (!root || !objects[root[1]]) return [];
+  var pagesRef = /\/Pages\s+(\d+)\s+\d+\s+R/.exec(objects[root[1]].dictionary || '');
+  if (!pagesRef) return [];
+  var pageIds = [];
+  walkPdfPages_(objects, pagesRef[1], pageIds, {});
+  var texts = [];
+  for (i = 0; i < pageIds.length; i++) {
+    var page = objects[pageIds[i]];
+    var contentIds = pdfContentIds_(page && page.dictionary);
+    var chunks = [];
+    for (var c = 0; c < contentIds.length; c++) {
+      var stream = objects[contentIds[c]] && objects[contentIds[c]].stream;
+      if (stream) chunks.push(renderPdfContent_(stream, fontNames));
+    }
+    texts.push(chunks.join('\n').trim());
+  }
+  return texts;
 }
 
 /**
@@ -762,6 +850,7 @@ if (typeof module !== 'undefined') {
     htmlToText: htmlToText,
     textLayerIsUsable: textLayerIsUsable,
     extractPdfTextLayer: extractPdfTextLayer,
+    extractPdfPageTexts: extractPdfPageTexts,
     readDocumentText: readDocumentText,
     textSourceForMime: textSourceForMime,
     allowsOcr: allowsOcr,

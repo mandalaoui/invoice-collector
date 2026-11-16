@@ -385,6 +385,74 @@ function driveIdFromLink(link) {
   return '';
 }
 
+/**
+ * Notice for one file inside the merged PDF. Page numbers are the merged PDF.
+ * keepLocal null, or no keyword page, means check manually.
+ * @return {string}
+ */
+function multipageNote(file) {
+  var source = file || {};
+  var pages = Number(source.pages);
+  if (!(pages > 1)) return '';
+  var start = Number(source.start);
+  if (!isFinite(start) || start < 1) start = 1;
+  var end = start + pages - 1;
+  var range = start + '-' + end;
+  var z = 'check manually';
+  var local = source.keepLocal;
+  if (local && local.length) {
+    var merged = [];
+    var i;
+    for (i = 0; i < local.length; i++) {
+      var n = Number(local[i]);
+      if (n >= 1 && n <= pages) merged.push(String(start + n - 1));
+    }
+    if (merged.length) z = merged.join(', ');
+  }
+  return (
+    'File ' +
+    source.name +
+    ' has ' +
+    pages +
+    ' pages; pages to keep: ' +
+    z +
+    '; merged PDF pages ' +
+    range
+  );
+}
+
+/**
+ * @param {Array<{id?: string, name: string, pages: number, keepLocal?: number[]|null}>} files
+ * @return {Array<{id: string, name: string, note: string}>}
+ */
+function multipageNotes(files) {
+  var start = 1;
+  var notes = [];
+  var list = files || [];
+  for (var i = 0; i < list.length; i++) {
+    var pages = Number(list[i].pages) || 0;
+    var note = multipageNote({
+      name: list[i].name,
+      pages: pages,
+      start: start,
+      keepLocal: list[i].keepLocal
+    });
+    if (note) notes.push({ id: list[i].id || '', name: list[i].name || '', note: note });
+    start += pages > 0 ? pages : 0;
+  }
+  return notes;
+}
+
+function noticeLines_(notices) {
+  var lines = [];
+  var list = notices || [];
+  for (var i = 0; i < list.length; i++) {
+    var line = list[i] && list[i].note ? list[i].note : list[i];
+    if (line) lines.push(String(line));
+  }
+  return lines;
+}
+
 /** Files for the merged PDF. NOT_INVOICE and DUPLICATE are left out. */
 function selectMergeFiles(rows) {
   var included = summarizeMonth(rows).included;
@@ -1189,6 +1257,7 @@ function createMergedInvoicePdf(rows, month, options) {
   try {
     var pdfs = [];
     var names = [];
+    var spans = [];
     var i;
     for (i = 0; i < selected.length; i++) {
       var original = DriveApp.getFileById(selected[i].id);
@@ -1202,13 +1271,27 @@ function createMergedInvoicePdf(rows, month, options) {
       copies.push(copy);
       names.push(original.getName());
       try {
-        pdfs.push(bytesReadyForMerge_(bytesForMergeCopy_(copy), original.getName()));
+        var ready = bytesReadyForMerge_(bytesForMergeCopy_(copy), original.getName());
+        pdfs.push(ready);
+        var count = pdfPageCount(ready);
+        var texts = [];
+        try {
+          texts = extractPdfPageTexts(ready);
+        } catch (ignore) {
+          texts = [];
+        }
+        spans.push({
+          id: original.getId(),
+          name: original.getName(),
+          pages: count,
+          keepLocal: texts.length === count ? keywordPages(texts, getConfig()) : null
+        });
       } catch (error) {
         throw new Error(original.getName() + ': ' + (error && error.message ? error.message : error));
       }
     }
     var name = options && options.name ? String(options.name) : mergedPdfName(month);
-    if (!pdfs.length) return { fileId: '', url: '', pages: 0, name: name, originals: before };
+    if (!pdfs.length) return { fileId: '', url: '', pages: 0, name: name, originals: before, notices: [] };
     var merged = mergePdfBytes(pdfs, names);
     var created = folder.createFile(Utilities.newBlob(toByteArray_(merged), 'application/pdf', name));
     var previous = folder.getFilesByName(name);
@@ -1227,7 +1310,8 @@ function createMergedInvoicePdf(rows, month, options) {
       url: created.getUrl(),
       pages: pdfPageCount(merged),
       name: name,
-      originals: before
+      originals: before,
+      notices: multipageNotes(spans)
     };
   } finally {
     for (var c = 0; c < copies.length; c++) {
@@ -1339,6 +1423,9 @@ if (typeof module !== 'undefined') {
     withMonthlySummary: withMonthlySummary,
     driveIdFromLink: driveIdFromLink,
     selectMergeFiles: selectMergeFiles,
+    multipageNote: multipageNote,
+    multipageNotes: multipageNotes,
+    noticeLines_: noticeLines_,
     mergedPdfName: mergedPdfName,
     mergePdfBytes: mergePdfBytes,
     jpegToPdfBytes: jpegToPdfBytes,

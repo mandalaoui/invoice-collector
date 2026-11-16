@@ -238,8 +238,9 @@ function publishMonth_(config, month, collected) {
       scanned: collected && collected.scanned ? collected.scanned : 0,
       documents: summary.documents
     },
-    notices: pdf.notices || []
+    notices: noticeLines_(pdf.notices)
   });
+  writeInvoiceNotes(pdf.notices);
   return {
     month: month,
     documents: summary.documents,

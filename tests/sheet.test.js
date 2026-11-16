@@ -162,6 +162,20 @@ test('invoice rows are written once per message and a repeated document is DUPLI
   assert.equal(sheet.invoiceSourceId('m1 01-tax'), 'm1');
 });
 
+test('a multipage note replaces an older one and keeps other text', () => {
+  assert.equal(
+    sheet.mergeInvoiceNote_('call the vendor', 'File a.pdf has 2 pages; pages to keep: 4; merged PDF pages 3-4'),
+    'call the vendor\nFile a.pdf has 2 pages; pages to keep: 4; merged PDF pages 3-4'
+  );
+  assert.equal(
+    sheet.mergeInvoiceNote_(
+      'call the vendor\nFile a.pdf has 2 pages; pages to keep: check manually; merged PDF pages 3-4',
+      'File a.pdf has 2 pages; pages to keep: 4; merged PDF pages 3-4'
+    ),
+    'call the vendor\nFile a.pdf has 2 pages; pages to keep: 4; merged PDF pages 3-4'
+  );
+});
+
 test('doc_date is written as one Date with yyyy-mm-dd', () => {
   global.INVOICE_HEADERS = config.INVOICE_HEADERS;
   const fromDmy = sheet.sheetDateValue('02/11/2026');

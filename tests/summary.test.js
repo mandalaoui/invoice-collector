@@ -126,3 +126,26 @@ test('merged pdf is built from copies of the fixture bytes', () => {
   });
   assert.equal(report.pdfPageCount(originals[0]), 1);
 });
+
+test('multipage notes use merged page numbers', () => {
+  const extract = require('../src/extract.js');
+  const config = require('../src/config.js');
+  const notes = report.multipageNotes([
+    { id: 'a', name: 'one.pdf', pages: 1, keepLocal: [1] },
+    { id: 'b', name: 'two.pdf', pages: 3, keepLocal: [1, 3] },
+    { id: 'c', name: 'scan.pdf', pages: 2, keepLocal: null }
+  ]);
+  assert.deepEqual(
+    notes.map((item) => item.note),
+    [
+      'File two.pdf has 3 pages; pages to keep: 2, 4; merged PDF pages 2-4',
+      'File scan.pdf has 2 pages; pages to keep: check manually; merged PDF pages 5-6'
+    ]
+  );
+  assert.deepEqual(report.noticeLines_(notes), notes.map((item) => item.note));
+  const settings = config.getConfig([]);
+  assert.deepEqual(
+    extract.keywordPages(['hello', 'סה"כ לתשלום 10\nמספר 12', ''], settings),
+    [2]
+  );
+});

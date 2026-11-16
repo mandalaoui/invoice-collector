@@ -30,7 +30,11 @@ function testCoverage() {
       bodyHasInvoiceText('סה"כ לתשלום 10') === true,
       bodyHasInvoiceText('hello meeting') === false,
       coverage.indexOf('q1=2') >= 0 && coverage.indexOf('skipped 1') >= 0,
-      note === 'Coverage: 3 messages scanned, 1 documents.'
+      note === 'Coverage: 3 messages scanned, 1 documents.',
+      multipageNote({ name: 'a.pdf', pages: 3, start: 5, keepLocal: [2] }) ===
+        'File a.pdf has 3 pages; pages to keep: 6; merged PDF pages 5-7',
+      multipageNote({ name: 'b.pdf', pages: 2, start: 1, keepLocal: null }).indexOf('check manually') >= 0,
+      multipageNote({ name: 'c.pdf', pages: 1, start: 1, keepLocal: [1] }) === ''
     ];
     pass = checks.every(function (ok) {
       return ok;

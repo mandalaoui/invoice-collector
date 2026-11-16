@@ -74,7 +74,8 @@ test('workbook tabs and invoice headers match the spec', () => {
     'source',
     'file_link',
     'confidence',
-    'status'
+    'status',
+    'notes'
   ]);
   assert.deepEqual(config.headersFor('AnswerKey'), config.headersFor('Invoices'));
   assert.ok(config.headersFor('RunLog').indexOf('mode') !== -1);

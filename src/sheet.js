@@ -335,8 +335,54 @@ function buildInvoiceRow(entry) {
 function invoiceSheet_() {
   var sheet = openCollectorSpreadsheet_().getSheetByName('Invoices');
   if (!sheet) throw new Error('Invoices tab is missing. Run setupCollectorSheet().');
-  if (sheet.getLastRow() === 0) sheet.appendRow(INVOICE_HEADERS.slice());
+  ensureHeaderRow_(sheet, INVOICE_HEADERS);
   return sheet;
+}
+
+function mergeInvoiceNote_(existing, note) {
+  var sentence = String(note || '').trim();
+  var text = String(existing || '')
+    .replace(/File .+ has \d+ pages; pages to keep:.*$/gm, '')
+    .trim();
+  if (!sentence) return text;
+  if (text.indexOf(sentence) >= 0) return text;
+  return text ? text + '\n' + sentence : sentence;
+}
+
+/**
+ * Writes multipage notices into the notes column, matched by file id.
+ * @param {Array<{id: string, note: string}>} updates
+ * @return {number}
+ */
+function writeInvoiceNotes(updates) {
+  var list = updates || [];
+  var byId = {};
+  var i;
+  for (i = 0; i < list.length; i++) {
+    if (list[i] && list[i].id && list[i].note) byId[String(list[i].id)] = list[i].note;
+  }
+  var ids = Object.keys(byId);
+  if (!ids.length) return 0;
+  var sheet = invoiceSheet_();
+  var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return 0;
+  var linkCol = -1;
+  var notesCol = -1;
+  for (i = 0; i < values[0].length; i++) {
+    if (String(values[0][i]) === 'file_link') linkCol = i;
+    if (String(values[0][i]) === 'notes') notesCol = i;
+  }
+  if (linkCol < 0 || notesCol < 0) return 0;
+  var written = 0;
+  for (var r = 1; r < values.length; r++) {
+    var id = driveIdFromLink(values[r][linkCol]);
+    if (!id || !byId[id]) continue;
+    var next = mergeInvoiceNote_(values[r][notesCol], byId[id]);
+    if (String(values[r][notesCol] || '') === next) continue;
+    sheet.getRange(r + 1, notesCol + 1).setValue(next);
+    written++;
+  }
+  return written;
 }
 
 function readInvoiceRows() {
@@ -389,6 +435,7 @@ if (typeof module !== 'undefined') {
     invoiceSourceId: invoiceSourceId,
     planInvoiceRows: planInvoiceRows,
     buildInvoiceRow: buildInvoiceRow,
+    mergeInvoiceNote_: mergeInvoiceNote_,
     sheetDateValue: sheetDateValue,
     invoiceNumberFormat: invoiceNumberFormat,
     SHEET_DATE_FORMAT: SHEET_DATE_FORMAT

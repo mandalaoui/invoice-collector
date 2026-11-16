@@ -381,6 +381,36 @@ function findCurrency_(text, totalLine, config) {
   return config.currency_default || 'ILS';
 }
 
+/**
+ * 1-based indexes of pages whose text contains a total, VAT, or document-number keyword.
+ * @param {string[]} pageTexts
+ * @param {Object} config
+ * @return {number[]}
+ */
+function keywordPages(pageTexts, config) {
+  var settings = config || {};
+  var keywords = []
+    .concat(settings.keywords_total || [])
+    .concat(settings.keywords_vat || [])
+    .concat(settings.keywords_doc_number || []);
+  var hits = [];
+  var pages = pageTexts || [];
+  var i;
+  var k;
+  for (i = 0; i < pages.length; i++) {
+    if (pages[i] == null || pages[i] === '') continue;
+    var found = false;
+    for (k = 0; k < keywords.length; k++) {
+      if (phraseHits_(String(pages[i]), keywords[k])) {
+        found = true;
+        break;
+      }
+    }
+    if (found) hits.push(i + 1);
+  }
+  return hits;
+}
+
 function buyerNameOk_(text, config) {
   var folded = foldExtract_(text);
   var companyId = String(config.company_id || '').replace(/\D/g, '');
@@ -526,6 +556,7 @@ if (typeof module !== 'undefined') {
   module.exports = {
     normalizeExtractText: normalizeExtractText,
     extractInvoice: extractInvoice,
+    keywordPages: keywordPages,
     classifyInvoice: classifyInvoice
   };
 }
